@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 
+st.markdown('<div class="fade-in">', unsafe_allow_html=True)
 st.markdown('<h3 style="color:#00aaff;">Relatório de Análise</h3>', unsafe_allow_html=True)
 col1, col2 = st.columns([2, 1])
 with col1:
@@ -16,3 +17,4 @@ with col1:
     st.markdown('</div>', unsafe_allow_html=True)
 with col2:
     st.markdown('<div class="card"><h4 style="color:#e0e6f0;">Chat Interativo</h4><textarea placeholder="Faça uma pergunta sobre os dados..." style="width:100%;height:200px;background:#1a2233;color:white;border-radius:8px;"></textarea><br><button style="margin-top:8px;width:100%;">Enviar Pergunta</button></div>', unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
