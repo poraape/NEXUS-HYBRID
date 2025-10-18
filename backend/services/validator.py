@@ -1,10 +1,13 @@
+from pathlib import Path
 from typing import Any, Dict
 
 import json
 
 from services.ai_bridge import build_explanations
 
-with open("rules/rules_dictionary.json", "r", encoding="utf-8") as f:
+
+RULES_PATH = Path(__file__).resolve().parents[1] / "rules" / "rules_dictionary.json"
+with RULES_PATH.open("r", encoding="utf-8") as f:
     RULES = json.load(f)
 
 WEIGHTS = RULES.get("severity_weights", {"ERROR": 3, "WARN": 1, "INFO": 0})
