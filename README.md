@@ -1,3 +1,18 @@
+---
+title: Nexus Quantum I2A2
+emoji: 🔵
+colorFrom: blue
+colorTo: indigo
+sdk: streamlit
+sdk_version: "1.37.0"
+app_file: app.py
+pinned: false
+---
+
+# Nexus Quantum I2A2
+
+Sistema híbrido em Python/Streamlit desenvolvido para análise e orquestração de agentes de IA multi-camada.
+
 # Nexus Hybrid — FastAPI + Streamlit
 
 Plataforma híbrida FastAPI/Streamlit preparada para o Desafio Final I2A2 com orquestração assíncrona, agentes especializados e exportações fiscais validadas.
