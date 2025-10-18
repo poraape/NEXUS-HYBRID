@@ -5,9 +5,17 @@ Arquitetura híbrida que replica a versão Nexus (React/TS) com backend robusto 
 ## Rodar com Docker (recomendado)
 ```bash
 docker compose up --build
-# UI: http://localhost:8501
-# API: http://localhost:8000/docs
 ```
+
+Assim que os containers estiverem no ar, o Streamlit imprime no terminal um trecho como:
+
+```
+You can now view your Streamlit app in your browser.
+  URL: http://0.0.0.0:8501
+```
+
+Abra um navegador local e acesse **http://localhost:8501** para visualizar a interface.
+Os endpoints REST da API FastAPI continuam disponíveis em **http://localhost:8000/docs**.
 
 ## Rodar localmente (sem Docker)
 Backend:
@@ -21,6 +29,8 @@ Frontend:
 pip install -r frontend/requirements.txt
 streamlit run frontend/app.py
 ```
+
+O comando acima também exibe a URL do app; abra **http://localhost:8501** no navegador para ver a UI.
 
 ## Endpoints principais (FastAPI)
 - `POST /upload/zip` — recebe .zip, processa todos os arquivos e retorna reports JSON
