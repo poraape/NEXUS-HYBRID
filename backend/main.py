@@ -1,4 +1,7 @@
-import os, io, zipfile, mimetypes
+import io
+import mimetypes
+from pathlib import Path
+
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -52,7 +55,13 @@ async def upload_file(file: UploadFile = File(...)):
     size_mb = len(content)/1024/1024
     if size_mb > settings.MAX_UPLOAD_MB:
         raise HTTPException(413, f"Arquivo excede limite de {settings.MAX_UPLOAD_MB} MB")
-    doc = parse_file(file.filename, content, file.content_type or "")
+    suffix = Path(file.filename or "").suffix.lower()
+    mime = file.content_type or ""
+    if suffix and suffix not in settings.ALLOWED_EXTENSIONS:
+        raise HTTPException(400, "Extensão não suportada para processamento.")
+    if mime and not any(mime.startswith(prefix) for prefix in settings.ALLOWED_MIME_PREFIXES):
+        raise HTTPException(400, "MIME type não autorizado.")
+    doc = parse_file(file.filename, content, mime)
     result = await process_documents_pipeline([doc])
     return JSONResponse(result)
 

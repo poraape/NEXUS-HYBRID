@@ -5,35 +5,98 @@
       "field": "cfop",
       "severity": "ERROR",
       "message": "CFOP inválido ou incompatível com a operação informada",
-      "normativeBase": "RICMS-SP Art. 33"
+      "normative_base": "RICMS/SP Art. 33"
     },
     {
       "code": "NCM_FORMAT",
       "field": "ncm",
       "severity": "WARN",
-      "message": "NCM fora do padrão (8 dígitos)",
-      "normativeBase": "TIPI 2022"
+      "message": "NCM fora do padrão de 8 dígitos (TIPI)",
+      "normative_base": "TIPI 2022 - Resolução GECEX 272/2021"
     },
     {
-      "code": "CST_PIS_COFINS",
-      "field": "cst_pis_cofins",
+      "code": "CST_COMPATIBILITY",
+      "field": "cst",
       "severity": "ERROR",
-      "message": "CST PIS/COFINS inconsistente com o CFOP",
-      "normativeBase": "Lei 10.833/03 Art. 3º"
+      "message": "CST informado não é compatível com o CFOP",
+      "normative_base": "Ajuste SINIEF 07/2005"
     },
     {
-      "code": "VALOR_NEGATIVO",
+      "code": "ICMS_BASE_CALC",
+      "field": "icms",
+      "severity": "ERROR",
+      "message": "Base de ICMS fora da tolerância para o regime informado",
+      "normative_base": "Lei Complementar 87/1996"
+    },
+    {
+      "code": "PIS_BASE_CALC",
+      "field": "pis",
+      "severity": "WARN",
+      "message": "PIS calculado difere do esperado",
+      "normative_base": "Lei 10.637/2002"
+    },
+    {
+      "code": "COFINS_BASE_CALC",
+      "field": "cofins",
+      "severity": "WARN",
+      "message": "COFINS calculado difere do esperado",
+      "normative_base": "Lei 10.833/2003"
+    },
+    {
+      "code": "ISS_BASE_CALC",
+      "field": "iss",
+      "severity": "WARN",
+      "message": "ISS calculado difere da faixa padrão do município",
+      "normative_base": "LC 116/2003"
+    },
+    {
+      "code": "ITEM_VALOR_NEGATIVO",
       "field": "valor",
       "severity": "ERROR",
       "message": "Valor do item não pode ser negativo",
-      "normativeBase": "Princípios contábeis - integridade"
+      "normative_base": "Princípios contábeis — CPC 00"
+    },
+    {
+      "code": "ST_REQUIREMENT",
+      "field": "substituicao_tributaria",
+      "severity": "INFO",
+      "message": "Operação exige avaliação de substituição tributária",
+      "normative_base": "Protocolo ICMS 41/2008"
+    },
+    {
+      "code": "IVA_MARKUP",
+      "field": "iva",
+      "severity": "WARN",
+      "message": "IVA aplicado fora da margem estabelecida para o segmento",
+      "normative_base": "Portaria CAT 16/2023"
     }
   ],
-  "cfopValid": [
-    "1102",
-    "2102",
-    "5101",
-    "5102",
-    "6102"
-  ]
+  "cfop_valid": ["1101", "1102", "2101", "2102", "5101", "5102", "6101", "6102", "1202", "2202", "5201", "6201"],
+  "cst_matrix": {
+    "1101": ["00", "20", "40"],
+    "1102": ["00", "20", "40"],
+    "2101": ["00", "10"],
+    "2102": ["00", "10"],
+    "5101": ["00", "20", "40"],
+    "5102": ["00", "20", "40"],
+    "6101": ["00", "10"],
+    "6102": ["00", "10"],
+    "1202": ["41", "60"],
+    "2202": ["41", "60"],
+    "5201": ["30", "60"],
+    "6201": ["30", "60"]
+  },
+  "severity_weights": {"ERROR": 3, "WARN": 1, "INFO": 0},
+  "tax_expectations": {
+    "simples_nacional": {"icms": 0.03, "pis": 0.0065, "cofins": 0.03, "iss_min": 0.02, "iss_max": 0.03, "iva": 0.12},
+    "lucro_presumido": {"icms": 0.18, "pis": 0.0165, "cofins": 0.076, "iss_min": 0.04, "iss_max": 0.05, "iva": 0.25},
+    "lucro_real": {"icms": 0.18, "pis": 0.0165, "cofins": 0.076, "iss_min": 0.03, "iss_max": 0.04, "iva": 0.28}
+  },
+  "segments_markup": {
+    "Tecnologia da Informação": {"min": 0.18, "max": 0.35},
+    "Saúde/Farma": {"min": 0.12, "max": 0.28},
+    "Alimentos": {"min": 0.08, "max": 0.2},
+    "Geral": {"min": 0.1, "max": 0.3}
+  },
+  "st_sensitive_cfop": ["5401", "5403", "6401", "6403"]
 }
