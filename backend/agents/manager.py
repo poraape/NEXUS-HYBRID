@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 
 import aiofiles
 
-from agents.accountant_agent import compute
+from agents.accountant_agent import accountant_agent, compute
 from agents.auditor_agent import audit
 from agents.classifier_agent import classify
 from agents.ocr_agent import run_ocr
@@ -168,5 +168,6 @@ async def process_documents_pipeline(docs: List[Dict[str, Any]]) -> Dict[str, An
     results = await asyncio.gather(*[_process_single_document(doc, semaphore) for doc in docs])
     reports = [r["report"] for r in results]
     logs = [r["log"] for r in results]
+    aggregated = accountant_agent(reports)
     await _export_logs(logs)
-    return {"reports": reports, "logs": logs}
+    return {"reports": reports, "logs": logs, "aggregated": aggregated}

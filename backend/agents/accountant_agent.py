@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
@@ -199,3 +200,78 @@ async def compute(doc: Dict[str, Any]) -> Dict[str, Any]:
         },
         "lancamentos": entries,
     }
+
+
+def _sum_from_source(report: Dict[str, Any]) -> Decimal:
+    source = report.get("source") or {}
+    itens = source.get("itens") or []
+    if not isinstance(itens, (list, tuple)):
+        return Decimal("0")
+    return _total_items(itens)
+
+
+def _resolve_report(entry: Dict[str, Any]) -> Dict[str, Any]:
+    if isinstance(entry, dict) and "report" in entry and "taxes" not in entry:
+        report = entry.get("report")
+        if isinstance(report, dict):
+            return report
+    return entry
+
+
+def accountant_agent(docs: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+    """Aggregate fiscal metrics across the processed documents."""
+    accumulator: Dict[str, Decimal] = {
+        "vNF": Decimal("0"),
+        "vProd": Decimal("0"),
+        "vICMS": Decimal("0"),
+        "vPIS": Decimal("0"),
+        "vCOFINS": Decimal("0"),
+    }
+    detailed: List[Dict[str, Any]] = []
+
+    for index, entry in enumerate(docs, start=1):
+        try:
+            report = _resolve_report(entry)
+            if not isinstance(report, dict):
+                continue
+
+            taxes_snapshot = report.get("taxes") or {}
+            resumo = taxes_snapshot.get("resumo") or {}
+
+            valor_produtos = _sum_from_source(report)
+            vprod = valor_produtos
+            vnf = _as_decimal(report.get("vNF"))
+            if vnf <= 0:
+                vnf = vprod
+
+            icms = _as_decimal(resumo.get("totalICMS"))
+            pis = _as_decimal(resumo.get("totalPIS"))
+            cofins = _as_decimal(resumo.get("totalCOFINS"))
+
+            accumulator["vProd"] += vprod
+            accumulator["vNF"] += vnf
+            accumulator["vICMS"] += icms
+            accumulator["vPIS"] += pis
+            accumulator["vCOFINS"] += cofins
+
+            detailed.append(
+                {
+                    "documentId": report.get("documentId"),
+                    "title": report.get("title"),
+                    "vProd": _round(vprod),
+                    "vNF": _round(vnf),
+                    "vICMS": _round(icms),
+                    "vPIS": _round(pis),
+                    "vCOFINS": _round(cofins),
+                }
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logging.exception("Erro ao consolidar doc %s: %s", entry.get("documentId", index), exc)
+
+    totals = {key: _round(value) for key, value in accumulator.items()}
+    summary_text = (
+        f"{len(detailed)} documento(s) consolidados."
+        if detailed
+        else "Nenhum documento consolidado."
+    )
+    return {"docs": detailed, "totals": totals, "summary": summary_text}
