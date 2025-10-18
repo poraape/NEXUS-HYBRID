@@ -1,0 +1,39 @@
+{
+  "rules": [
+    {
+      "code": "CFOP_VALID",
+      "field": "cfop",
+      "severity": "ERROR",
+      "message": "CFOP inválido ou incompatível com a operação informada",
+      "normativeBase": "RICMS-SP Art. 33"
+    },
+    {
+      "code": "NCM_FORMAT",
+      "field": "ncm",
+      "severity": "WARN",
+      "message": "NCM fora do padrão (8 dígitos)",
+      "normativeBase": "TIPI 2022"
+    },
+    {
+      "code": "CST_PIS_COFINS",
+      "field": "cst_pis_cofins",
+      "severity": "ERROR",
+      "message": "CST PIS/COFINS inconsistente com o CFOP",
+      "normativeBase": "Lei 10.833/03 Art. 3º"
+    },
+    {
+      "code": "VALOR_NEGATIVO",
+      "field": "valor",
+      "severity": "ERROR",
+      "message": "Valor do item não pode ser negativo",
+      "normativeBase": "Princípios contábeis - integridade"
+    }
+  ],
+  "cfopValid": [
+    "1102",
+    "2102",
+    "5101",
+    "5102",
+    "6102"
+  ]
+}

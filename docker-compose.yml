@@ -1,0 +1,24 @@
+version: "3.9"
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: nexus-backend
+    environment:
+      - MAX_UPLOAD_MB=200
+      - LOG_LEVEL=INFO
+      - ENABLE_SPED_EXPORT=true
+    ports:
+      - "8000:8000"
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: nexus-frontend
+    depends_on:
+      - backend
+    environment:
+      - STREAMLIT_SERVER_HEADLESS=true
+    ports:
+      - "8501:8501"
