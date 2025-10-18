@@ -74,3 +74,62 @@ button:hover, .stButton>button:hover {
 /* === Chat Box Styling === */
 textarea { resize: none; transition: border 0.3s ease; }
 textarea:focus { border-color: #00aaff; box-shadow: 0 0 6px rgba(0,170,255,0.4); }
+.chat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.chat-history {
+  max-height: 380px;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+.chat-history::-webkit-scrollbar {
+  width: 6px;
+}
+.chat-history::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.4);
+  border-radius: 8px;
+}
+.chat-bubble {
+  padding: 10px 14px;
+  border-radius: 12px;
+  margin-bottom: 10px;
+  font-size: 0.95rem;
+  line-height: 1.4;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(20, 26, 38, 0.9);
+}
+.chat-bubble--user {
+  background: rgba(0, 170, 255, 0.16);
+  border-color: rgba(0, 170, 255, 0.4);
+  text-align: left;
+}
+.chat-bubble--assistant {
+  background: rgba(15, 23, 42, 0.9);
+}
+.chat-meta {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  display: block;
+  margin-bottom: 4px;
+}
+.chat-placeholder {
+  padding: 14px;
+  border-radius: 10px;
+  background: rgba(148,163,184,0.08);
+  color: var(--text-muted);
+}
+.stForm [data-baseweb="textarea"] {
+  border-radius: 10px;
+}
+.stForm button[kind="primary"] {
+  background: linear-gradient(90deg, #00aaff 0%, #00ffcc 100%);
+  border: none;
+}
+.stForm button[kind="primary"]:hover {
+  box-shadow: 0 0 14px rgba(0, 255, 204, 0.35);
+}
