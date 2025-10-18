@@ -1,13 +1,18 @@
-hf-sync.ymlname: Sync to Hugging Face
+name: Sync to Hugging Face
+
 on:
   push:
     branches: [main]
+
 jobs:
   sync:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v3
-      - name: Push to Hugging Face
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Push to Hugging Face Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
