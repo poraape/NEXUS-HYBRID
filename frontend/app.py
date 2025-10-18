@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Tuple
 
 import pandas as pd
@@ -76,6 +77,55 @@ def aggregate_results(responses: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     return {"reports": reports, "logs": logs, "docs": docs, "totals": totals}
 
 
+def _enqueue_files(files: Iterable["UploadedFile"]) -> Tuple[int, List[str]]:
+    added = 0
+    duplicates: List[str] = []
+    for file in files:
+        if file.name not in st.session_state["uploaded_names"]:
+            st.session_state["uploaded_payloads"].append(_prepare_payload(file))
+            st.session_state["uploaded_names"].append(file.name)
+            added += 1
+        else:
+            duplicates.append(file.name)
+    return added, duplicates
+
+
+def _render_chat_history(messages: Iterable[Dict[str, str]]) -> str:
+    rows: List[str] = []
+    for message in messages:
+        role = message.get("role", "assistant")
+        role_class = "user" if role == "user" else "assistant"
+        label = "Você" if role == "user" else "Nexus"
+        safe_content = html.escape(message.get("content", "")).replace("\n", "<br>")
+        rows.append(
+            f"<div class='chat-bubble chat-bubble--{role_class}'><span class='chat-meta'>{label}</span><p>{safe_content}</p></div>"
+        )
+    if not rows:
+        rows.append(
+            "<div class='chat-placeholder'>Envie uma pergunta ou anexe novos arquivos para complementar a análise.</div>"
+        )
+    return "<div class='chat-history'>" + "".join(rows) + "</div>"
+
+
+def _build_chat_reply(prompt: str) -> str:
+    prompt = prompt.strip()
+    aggregated = st.session_state.get("aggregated_overview")
+    if aggregated:
+        totals = aggregated.get("totals", {})
+        docs = aggregated.get("docs", [])
+        summary_parts = [
+            f"Atualmente acompanhamos {len(docs)} documento(s) consolidado(s).",
+            f"O valor total dos produtos está em {_format_brl(totals.get('vProd', 0.0))}.",
+        ]
+        if totals.get("vICMS"):
+            summary_parts.append(f"A projeção de ICMS soma {_format_brl(totals.get('vICMS', 0.0))}.")
+        return "\n\n".join([f'Mensagem recebida: "{prompt}"', *summary_parts])
+    return (
+        "Mensagem recebida, mas ainda não há resultados processados. "
+        "Adicione arquivos e execute a análise incremental para obter respostas contextualizadas."
+    )
+
+
 def display_summary(aggregated: Dict[str, Any], *, show_success: bool = True) -> None:
     totals = aggregated.get("totals", {})
     docs = aggregated.get("docs", [])
@@ -127,6 +177,18 @@ if "analysis_errors" not in st.session_state:
     st.session_state["analysis_errors"] = []
 if "analysis_completed" not in st.session_state:
     st.session_state["analysis_completed"] = False
+if "chat_messages" not in st.session_state:
+    st.session_state["chat_messages"] = [
+        {
+            "role": "assistant",
+            "content": (
+                "Olá! Carregue seus arquivos fiscais para começarmos a análise. "
+                "Você pode enviar novos documentos a qualquer momento pelo painel lateral."
+            ),
+        }
+    ]
+if "chat_feedback" not in st.session_state:
+    st.session_state["chat_feedback"] = None
 st.markdown('<h2 style="color:#00aaff;font-weight:600;">💠 Nexus QuantumI2A2</h2><p style="color:#94a3b8;">Interactive Insight & Intelligence from Fiscal Analysis</p>', unsafe_allow_html=True)
 st.markdown('<div class="fade-in"><h4 style="color:#94a3b8;">Bem-vindo ao Nexus QuantumI2A2 Hybrid.</h4><p style="color:#64748b;">Aguarde enquanto os módulos são inicializados...</p></div>', unsafe_allow_html=True)
 st.divider()
@@ -142,16 +204,11 @@ with col1:
     )
     st.caption('Suportados: XML, CSV, XLSX, PDF, Imagens (PNG, JPG), ZIP (limite 200MB)')
 
-    added = 0
     if new_files:
-        for file in new_files:
-            if file.name not in st.session_state['uploaded_names']:
-                st.session_state['uploaded_payloads'].append(_prepare_payload(file))
-                st.session_state['uploaded_names'].append(file.name)
-                added += 1
+        added, duplicates = _enqueue_files(new_files)
         if added:
-            st.info(f'{added} novo(s) arquivo(s) adicionado(s) à análise.')
-        else:
+            st.info(f"{added} novo(s) arquivo(s) adicionado(s) à análise.")
+        elif duplicates:
             st.warning('Nenhum arquivo novo foi adicionado; todos já estavam na fila.')
 
     total_files = len(st.session_state['uploaded_payloads'])
@@ -196,7 +253,53 @@ with col1:
 
             st.session_state['analysis_completed'] = bool(results)
 with col2:
-    st.markdown('<div class="card"><b>💬 Chat Interativo</b><br><span style="color:#94a3b8;">Sua análise fiscal estará aqui. Faça perguntas sobre os dados processados.</span></div>', unsafe_allow_html=True)
+    chat_container = st.container()
+    chat_container.markdown(
+        '<div class="card chat-card"><b>💬 Chat Interativo</b><br><span style="color:#94a3b8;">Converse sobre a análise fiscal, anexe novos arquivos a qualquer momento e acompanhe os destaques automaticamente.</span>',
+        unsafe_allow_html=True,
+    )
+    chat_container.markdown(
+        _render_chat_history(st.session_state.get('chat_messages', [])),
+        unsafe_allow_html=True,
+    )
+    with chat_container.form('chat_form', clear_on_submit=True):
+        prompt = st.text_area(
+            'Mensagem',
+            key='chat_prompt',
+            placeholder='Faça uma pergunta ou descreva novos documentos a enviar...',
+            height=120,
+        )
+        chat_files = st.file_uploader(
+            'Anexar arquivos adicionais',
+            type=['xml', 'csv', 'xlsx', 'pdf', 'jpg', 'png', 'zip'],
+            accept_multiple_files=True,
+            key='chat_file_uploader',
+        )
+        submitted = st.form_submit_button('Enviar', use_container_width=True)
+    feedback = None
+    if submitted:
+        attachments = chat_files or []
+        added, duplicates = _enqueue_files(attachments)
+        text = (prompt or '').strip()
+        if text:
+            st.session_state['chat_messages'].append({'role': 'user', 'content': text})
+            st.session_state['chat_messages'].append({'role': 'assistant', 'content': _build_chat_reply(text)})
+        if added:
+            feedback = ('success', f'{added} arquivo(s) foram adicionados à fila de processamento.')
+        elif attachments:
+            duplicate_list = ', '.join(duplicates) if duplicates else 'os arquivos enviados'
+            feedback = ('warning', f'Não houve anexos novos; {duplicate_list} já estava(m) presente(s).')
+        elif text:
+            feedback = ('info', 'Mensagem registrada. Execute ou atualize a análise para obter novos insights.')
+        else:
+            feedback = ('info', 'Nenhuma mensagem ou arquivo foi enviado.')
+        st.session_state['chat_feedback'] = feedback
+    feedback = st.session_state.get('chat_feedback')
+    if feedback:
+        level, message = feedback
+        getattr(chat_container, level)(message)
+        st.session_state['chat_feedback'] = None
+    chat_container.markdown('</div>', unsafe_allow_html=True)
 
 aggregated_overview = st.session_state.get('aggregated_overview')
 analysis_results = st.session_state.get('analysis_results', [])
