@@ -140,37 +140,39 @@ def _inject_theme() -> None:
         layout="wide",
         initial_sidebar_state="collapsed",
     )
+
     assets_path = Path(__file__).parent / "assets" / "theme.css"
     if assets_path.exists():
         st.markdown(f"<style>{assets_path.read_text()}</style>", unsafe_allow_html=True)
-    css = f"""
+
+    css_template = Template("""
     <style>
-        header, [data-testid=\"stSidebar\"], [data-testid=\"collapsedControl\"], [data-testid=\"stToolbar\"] {{
+        header, [data-testid="stSidebar"], [data-testid="collapsedControl"], [data-testid="stToolbar"] {
             display: none !important;
-        }}
-        body {{
-            background: {BACKGROUND_COLOR};
-            color: {TEXT_COLOR};
+        }
+        body {
+            background: $background;
+            color: $text;
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        }}
-        [data-testid=\"stAppViewContainer\"] > .main {{
-            background: {BACKGROUND_COLOR};
-        }}
-        .block-container {{
+        }
+        [data-testid="stAppViewContainer"] > .main {
+            background: $background;
+        }
+        .block-container {
             padding: 0 2.4rem 4rem;
             max-width: 1180px;
             margin: 0 auto;
-        }}
-        .nxq-header {{
+        }
+        .nxq-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
             padding: 20px 0 18px;
             margin-bottom: 26px;
             border-bottom: 1px solid rgba(130, 160, 210, 0.25);
-        }}
-        .nxq-brand {{ display: flex; align-items: center; gap: 18px; }}
-        .nxq-brand-logo {{
+        }
+        .nxq-brand { display: flex; align-items: center; gap: 18px; }
+        .nxq-brand-logo {
             width: 56px;
             height: 56px;
             border-radius: 16px;
@@ -181,7 +183,7 @@ def _inject_theme() -> None:
             justify-content: center;
             padding: 9px;
             box-shadow: 0 14px 30px rgba(3, 11, 28, 0.55);
-        }}
+        }
         .nxq-brand-logo svg { width: 100%; height: 100%; }
         .nxq-brand-title {
             margin: 0;
@@ -274,7 +276,9 @@ def _inject_theme() -> None:
         .nxq-logs-entry { border-left: 3px solid rgba(59,130,246,0.45); padding: 0.55rem 0.8rem; margin-bottom: 0.6rem; background: rgba(16,24,40,0.85); }
         .nxq-logs-entry small { color: rgba(198,212,238,0.65); display: block; margin-bottom: 3px; }
     </style>
-    """
+    """)
+
+    css = css_template.substitute(background=BACKGROUND_COLOR, text=TEXT_COLOR)
     st.markdown(css, unsafe_allow_html=True)
 
 def _enqueue_files(files: Iterable["UploadedFile"]) -> Tuple[int, List[str]]:
