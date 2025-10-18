@@ -23,7 +23,7 @@ jobs:
           git remote remove hf || true
           
           # Adiciona o repositório do HF com autenticação via token
-          git remote add hf https://medjotavesf:${HF_TOKEN}@huggingface.co/spaces/medjotavesf/Nexus-QuantumI2A2
+          git remote add hf https://medjotavesf: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$@huggingface.co/spaces/medjotavesf/Nexus-QuantumI2A2
 
           # Garante envio completo, criando branch main se necessário
           git push hf HEAD:main --force
