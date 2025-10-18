@@ -372,8 +372,9 @@ def _ensure_state_defaults() -> None:
 
 
 
+
 def _inject_theme() -> None:
-    st.set_page_config(page_title="Nexus QuantumI2A2", page_icon="NQ", layout="wide")
+    st.set_page_config(page_title="Nexus QuantumI2A2", page_icon="NQ", layout="wide", initial_sidebar_state="collapsed")
 
     assets_path = Path(__file__).parent / "assets" / "theme.css"
     if assets_path.exists():
@@ -395,15 +396,16 @@ def _inject_theme() -> None:
             color: var(--nxq-text);
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         }}
+        header, [data-testid="stSidebar"], [data-testid="collapsedControl"], [data-testid="stToolbar"] {{
+            display: none !important;
+        }}
         [data-testid="stAppViewContainer"] > .main {{
             background: var(--nxq-bg);
-        }}
-        [data-testid="stSidebar"] {{
-            background: rgba(7, 12, 22, 0.92);
         }}
         .block-container {{
             padding: 0 2.4rem 4rem;
             max-width: 1180px;
+            margin: 0 auto;
         }}
         .nxq-header {{
             display: flex;
@@ -419,16 +421,16 @@ def _inject_theme() -> None:
             gap: 18px;
         }}
         .nxq-brand-logo {{
-            width: 48px;
-            height: 48px;
-            border-radius: 14px;
+            width: 56px;
+            height: 56px;
+            border-radius: 16px;
             border: 1px solid rgba(118, 227, 255, 0.45);
-            background: linear-gradient(135deg, rgba(59, 130, 246, 0.32), rgba(20, 184, 166, 0.32));
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.38), rgba(20, 184, 166, 0.38));
             display: flex;
             align-items: center;
             justify-content: center;
-            padding: 8px;
-            box-shadow: 0 12px 28px rgba(3, 11, 28, 0.55);
+            padding: 9px;
+            box-shadow: 0 14px 30px rgba(3, 11, 28, 0.55);
         }}
         .nxq-brand-logo svg {{
             width: 100%;
@@ -441,53 +443,26 @@ def _inject_theme() -> None:
         }}
         .nxq-brand-name {{
             margin: 0;
-            font-size: 1.85rem;
+            font-size: 1.9rem;
             font-weight: 700;
             line-height: 1.1;
             background: linear-gradient(100deg, #9fdcff 0%, #6ee7d7 70%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
         }}
-        .nxq-brand-name span {{
-            color: inherit;
-        }}
         .nxq-brand-tagline {{
             margin: 0;
-            font-size: 0.92rem;
-            color: rgba(198, 212, 238, 0.78);
+            font-size: 0.95rem;
+            color: rgba(198, 212, 238, 0.8);
             letter-spacing: 0.015em;
         }}
-        .nxq-header-action {{
-            display: flex;
-            justify-content: flex-end;
-            width: 100%;
-        }}
-        .nxq-header-action [data-testid="stButton"] {{
-            width: 100%;
-        }}
         .nxq-header-action button {{
-            width: 44px;
-            height: 44px;
-            border-radius: 12px;
-            border: 1px solid rgba(121, 165, 255, 0.32) !important;
-            background: rgba(24, 38, 64, 0.85) !important;
-            box-shadow: 0 10px 25px rgba(2, 14, 34, 0.55);
-            color: transparent !important;
-            position: relative;
-        }}
-        .nxq-header-action button::after {{
-            content: "9";
-            color: #9fc8ff;
-            font-size: 1.25rem;
-            display: inline-block;
-        }}
-        .nxq-header-action button:hover::after {{
-            color: #c0deff;
+            display: none;
         }}
         .nxq-header-exports {{
-            background: rgba(10, 17, 30, 0.9);
+            background: rgba(10, 17, 30, 0.92);
             border: 1px solid var(--nxq-border);
-            border-radius: 16px;
+            border-radius: 18px;
             padding: 18px 22px;
             margin-bottom: 28px;
         }}
@@ -501,19 +476,15 @@ def _inject_theme() -> None:
             border-radius: 999px;
             padding: 0.45rem 1.1rem;
             border: 1px solid rgba(99, 146, 255, 0.35) !important;
-            background: rgba(34, 52, 88, 0.85) !important;
+            background: rgba(34, 52, 88, 0.88) !important;
             color: #cce5ff !important;
             font-weight: 600;
             font-size: 0.9rem;
         }}
-        .nxq-header-exports .nxq-export-grid [data-testid="stButton"] button:hover {{
-            background: rgba(48, 72, 122, 0.9) !important;
-            border-color: rgba(122, 180, 255, 0.55) !important;
-        }}
         .nxq-upload-wrapper {{
             display: flex;
             justify-content: center;
-            margin-top: 10px;
+            margin-top: 18px;
         }}
         .nxq-upload-card {{
             max-width: 620px;
@@ -536,27 +507,29 @@ def _inject_theme() -> None:
         .nxq-upload-card div[data-testid="stFileUploaderDropzone"] {{
             border: 2px dashed rgba(140, 178, 226, 0.45);
             border-radius: 18px;
-            background: rgba(8, 14, 26, 0.92);
-            padding: 48px 18px;
+            background: rgba(8, 14, 26, 0.9);
+            padding: 54px 20px 46px;
             display: flex;
+            flex-direction: column;
             align-items: center;
             justify-content: center;
-            flex-direction: column;
-            gap: 12px;
-            transition: border-color 0.2s ease, background-color 0.2s ease;
+            text-align: center;
+            position: relative;
+            gap: 10px;
         }}
-        .nxq-upload-card div[data-testid="stFileUploaderDropzone"]:hover {{
-            border-color: rgba(130, 215, 255, 0.85);
-            background: rgba(9, 17, 33, 0.96);
-        }}
-        .nxq-upload-card div[data-testid="stFileUploaderDropzone"] > div,
-        .nxq-upload-card div[data-testid="stFileUploaderDropzone"] > span {{
-            display: none;
+        .nxq-upload-card div[data-testid="stFileUploaderDropzone"] svg {
+            display: none !important;
+        }
+        .nxq-upload-card div[data-testid="stFileUploaderDropzone"] span,
+        .nxq-upload-card div[data-testid="stFileUploaderDropzone"] p,
+        .nxq-upload-card div[data-testid="stFileUploaderDropzone"] label {{
+            display: none !important;
         }}
         .nxq-upload-card div[data-testid="stFileUploaderDropzone"]::before {{
-            content: "91";
-            font-size: 2.6rem;
+            content: "↑";
+            font-size: 2.8rem;
             color: #8ed7ff;
+            margin-bottom: 6px;
         }}
         .nxq-upload-card div[data-testid="stFileUploaderDropzone"]::after {{
             content: "Clique ou arraste novos arquivos";
@@ -565,18 +538,21 @@ def _inject_theme() -> None:
             font-weight: 600;
             letter-spacing: 0.02em;
         }}
+        .nxq-upload-card div[data-testid="stFileUploaderDropzone"] button {{
+            margin-top: 20px;
+            border-radius: 999px;
+            padding: 0.5rem 1.45rem;
+            font-weight: 600;
+            background: linear-gradient(135deg, rgba(67, 97, 238, 0.95), rgba(56, 189, 248, 0.95)) !important;
+            border: none !important;
+            color: #f9fbff !important;
+            box-shadow: 0 14px 26px rgba(37, 99, 235, 0.32);
+        }}
         .nxq-upload-support {{
-            margin: 14px 0 0;
+            margin: 16px 0 0;
             text-align: center;
-            font-size: 0.9rem;
+            font-size: 0.88rem;
             color: rgba(180, 200, 230, 0.78);
-        }}
-        .nxq-demo-link {{
-            margin-top: 18px;
-            text-align: center;
-        }}
-        .nxq-demo-link [data-testid="stButton"] {{
-            display: inline-flex;
         }}
         .nxq-demo-link button {{
             background: none !important;
@@ -587,27 +563,21 @@ def _inject_theme() -> None:
             position: relative;
         }}
         .nxq-demo-link button::after {{
-            content: "N\00E3o tem um arquivo? Use um exemplo de demonstra\00E7\00E3o.";
+            content: "Não tem um arquivo? Use um exemplo de demonstração.";
             color: #7fb6ff;
             text-decoration: underline;
             font-size: 0.92rem;
         }}
-        .nxq-demo-link button:hover::after {{
-            color: #a6d5ff;
-        }}
         .nxq-upload-extras {{
             max-width: 620px;
-            margin: 28px auto 0;
-            background: rgba(12, 20, 34, 0.88);
+            margin: 24px auto 0;
+            background: rgba(12, 20, 34, 0.9);
             border: 1px solid rgba(118, 152, 211, 0.3);
             border-radius: 16px;
             padding: 22px 26px;
         }}
-        .nxq-upload-extras h4 {{
-            margin-top: 0;
-        }}
         .nxq-upload-actions {{
-            margin-top: 20px;
+            margin-top: 18px;
         }}
         .nxq-upload-actions [data-testid="stButton"] button {{
             width: 100%;
@@ -616,17 +586,13 @@ def _inject_theme() -> None:
             font-weight: 600;
             font-size: 0.95rem;
         }}
-        .nxq-upload-actions [data-testid="stButton"] button:first-child {{
-            background: linear-gradient(135deg, rgba(67, 97, 238, 0.9), rgba(56, 189, 248, 0.9)) !important;
+        .nxq-upload-actions [data-testid="stButton"]:first-child button {{
+            background: linear-gradient(135deg, rgba(67, 97, 238, 0.92), rgba(56, 189, 248, 0.92)) !important;
             border: none !important;
             color: #f9fbff !important;
             box-shadow: 0 16px 30px rgba(37, 99, 235, 0.35);
         }}
-        .nxq-upload-actions [data-testid="stButton"] button:first-child:disabled {{
-            background: rgba(53, 74, 128, 0.6) !important;
-            box-shadow: none;
-        }}
-        .nxq-upload-actions [data-testid="stButton"] button:nth-child(2) {{
+        .nxq-upload-actions [data-testid="stButton"]:last-child button {{
             background: rgba(30, 41, 59, 0.9) !important;
             border: 1px solid rgba(148, 163, 184, 0.35) !important;
             color: rgba(203, 213, 225, 0.9) !important;
@@ -659,10 +625,6 @@ def _inject_theme() -> None:
             text-align: center;
             padding: 1rem;
             min-height: 110px;
-        }}
-        .nxq-agent-card strong {{
-            display: block;
-            margin-bottom: 0.4rem;
         }}
         .nxq-agent-status {{
             display: inline-flex;
@@ -707,40 +669,6 @@ def _inject_theme() -> None:
             border-radius: 18px;
             padding: 1.3rem;
             box-shadow: 0 18px 38px rgba(3, 10, 28, 0.55);
-        }}
-        .chat-history {{
-            max-height: 360px;
-            overflow-y: auto;
-            margin-bottom: 1rem;
-            padding-right: 0.4rem;
-        }}
-        .chat-bubble {{
-            padding: 0.75rem 1rem;
-            border-radius: 12px;
-            margin-bottom: 0.6rem;
-            font-size: 0.95rem;
-            border: 1px solid rgba(120, 160, 215, 0.28);
-        }}
-        .chat-bubble--assistant {{
-            background: rgba(59, 130, 246, 0.12);
-        }}
-        .chat-bubble--user {{
-            background: rgba(56, 178, 172, 0.12);
-        }}
-        .chat-meta {{
-            display: block;
-            font-size: 0.75rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: rgba(198, 212, 238, 0.65);
-            margin-bottom: 0.25rem;
-        }}
-        .chat-placeholder {{
-            padding: 1rem;
-            border-radius: 12px;
-            border: 1px dashed rgba(120, 160, 210, 0.35);
-            text-align: center;
-            color: rgba(198, 212, 238, 0.7);
         }}
         .nxq-modal {{
             position: fixed;
