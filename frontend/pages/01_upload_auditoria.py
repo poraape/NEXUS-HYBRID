@@ -40,11 +40,14 @@ def _dispatch(endpoint: str, payload):
         body = response.json()
         st.session_state["reports"] = body.get("reports", [])
         st.session_state["processing_logs"] = body.get("logs", [])
+        aggregated = body.get("aggregated") or {}
+        st.session_state["aggregated_totals"] = aggregated.get("totals", {})
+        st.session_state["aggregated_docs"] = aggregated.get("docs", [])
         _animate_logs(body.get("logs", []))
         st.success("Processado! Vá para 'Relatórios & Exportação'.")
 
 
-tab1, tab2 = st.tabs(["Upload ZIP", "Upload Arquivo Único"])
+tab1, tab2, tab3 = st.tabs(["Upload ZIP", "Upload Arquivo Único", "Upload Múltiplo"])
 
 with tab1:
     zip_file = st.file_uploader("Selecione um .zip (até 200 MB)", type=["zip"], key="zip")
@@ -65,6 +68,23 @@ with tab2:
             f"{API}/upload/file",
             {"files": {"file": (f.name, f.getvalue(), f.type or "application/octet-stream")}},
         )
+
+with tab3:
+    files = st.file_uploader(
+        "Selecione múltiplos arquivos",
+        type=["xml", "csv", "xlsx", "pdf", "png", "jpg", "jpeg", "zip"],
+        accept_multiple_files=True,
+        key="batch",
+    )
+    if st.button("Enviar em Lote", type="primary", key="send-multi") and files:
+        payload = [
+            (
+                "files",
+                (file.name, file.getvalue(), file.type or "application/octet-stream"),
+            )
+            for file in files
+        ]
+        _dispatch(f"{API}/upload/multiple", {"files": payload})
 
 st.divider()
 st.subheader("Logs mais recentes")
