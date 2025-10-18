@@ -371,6 +371,7 @@ def _ensure_state_defaults() -> None:
         st.session_state["agent_status"].setdefault(agent, "pending")
 
 
+
 def _inject_theme() -> None:
     st.set_page_config(page_title="Nexus QuantumI2A2", page_icon="NQ", layout="wide")
 
@@ -378,183 +379,334 @@ def _inject_theme() -> None:
     if assets_path.exists():
         st.markdown(f"<style>{assets_path.read_text()}</style>", unsafe_allow_html=True)
 
-    css = """
+    css = f"""
     <style>
         :root {{
-            --nxq-primary: {primary};
-            --nxq-accent: {accent};
-            --nxq-bg: {background};
-            --nxq-text: {text};
+            --nxq-primary: {PRIMARY_COLOR};
+            --nxq-accent: {ACCENT_COLOR};
+            --nxq-bg: #040b18;
+            --nxq-panel: rgba(11, 19, 34, 0.94);
+            --nxq-border: rgba(120, 160, 210, 0.35);
+            --nxq-text: #eef5ff;
+            --nxq-muted: #90a9d4;
         }}
         body {{
             background: var(--nxq-bg);
             color: var(--nxq-text);
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         }}
-        [data-testid="stHeader"] {{
-            background: transparent;
+        [data-testid="stAppViewContainer"] > .main {{
+            background: var(--nxq-bg);
+        }}
+        [data-testid="stSidebar"] {{
+            background: rgba(7, 12, 22, 0.92);
         }}
         .block-container {{
-            padding-top: 0.75rem;
-            max-width: 1200px;
+            padding: 0 2.4rem 4rem;
+            max-width: 1180px;
         }}
         .nxq-header {{
-            position: sticky;
-            top: 0;
-            z-index: 50;
-            background: rgba(17, 24, 39, 0.92);
-            backdrop-filter: blur(14px);
-            border: 1px solid rgba(59, 130, 246, 0.25);
-            border-radius: 0 0 18px 18px;
-            padding: 1.25rem 1.5rem 1.1rem;
-            margin-bottom: 1.75rem;
-            box-shadow: 0 14px 28px rgba(2, 6, 23, 0.48);
-        }}
-        .nxq-header-grid {{
             display: flex;
+            align-items: center;
             justify-content: space-between;
-            gap: 1.5rem;
-            flex-wrap: wrap;
-            align-items: center;
+            padding: 24px 0 18px;
+            margin-bottom: 28px;
+            border-bottom: 1px solid rgba(110, 145, 210, 0.22);
         }}
-        .nxq-header-brand {{
+        .nxq-brand {{
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 18px;
         }}
-        .nxq-logo {{
-            width: 44px;
-            height: 44px;
-            border-radius: 12px;
-            background: linear-gradient(135deg, var(--nxq-primary), var(--nxq-accent));
+        .nxq-brand-logo {{
+            width: 48px;
+            height: 48px;
+            border-radius: 14px;
+            border: 1px solid rgba(118, 227, 255, 0.45);
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.32), rgba(20, 184, 166, 0.32));
             display: flex;
             align-items: center;
             justify-content: center;
-            color: #0b1220;
-            font-weight: 700;
-            font-size: 1.1rem;
+            padding: 8px;
+            box-shadow: 0 12px 28px rgba(3, 11, 28, 0.55);
         }}
-        .nxq-header-brand h2 {{
-            margin: 0;
-            font-size: 1.35rem;
-            letter-spacing: 0.04em;
+        .nxq-brand-logo svg {{
+            width: 100%;
+            height: 100%;
         }}
-        .nxq-header-brand p {{
-            margin: 0;
-            opacity: 0.7;
-            font-size: 0.9rem;
-        }}
-        .nxq-status-chip {{
-            display: inline-flex;
-            align-items: center;
-            gap: 0.45rem;
-            padding: 0.4rem 0.8rem;
-            border-radius: 999px;
-            background: rgba(37, 99, 235, 0.18);
-            border: 1px solid rgba(37, 99, 235, 0.35);
-            font-size: 0.8rem;
-            letter-spacing: 0.05em;
-            text-transform: uppercase;
-        }}
-        .nxq-actions {{
+        .nxq-brand-text {{
             display: flex;
             flex-direction: column;
-            gap: 0.5rem;
-            margin-top: 1rem;
+            gap: 6px;
         }}
-        .nxq-upload {{
-            border: 2px dashed rgba(148, 163, 184, 0.35);
-            border-radius: 18px;
-            padding: 2rem;
-            text-align: center;
-            background: rgba(15, 23, 42, 0.6);
-            transition: border 0.3s ease, background 0.3s ease;
+        .nxq-brand-name {{
+            margin: 0;
+            font-size: 1.85rem;
+            font-weight: 700;
+            line-height: 1.1;
+            background: linear-gradient(100deg, #9fdcff 0%, #6ee7d7 70%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
         }}
-        .nxq-upload:hover {{
-            border-color: var(--nxq-primary);
-            background: rgba(37, 99, 235, 0.18);
+        .nxq-brand-name span {{
+            color: inherit;
         }}
-        .nxq-upload-help {{
+        .nxq-brand-tagline {{
+            margin: 0;
+            font-size: 0.92rem;
+            color: rgba(198, 212, 238, 0.78);
+            letter-spacing: 0.015em;
+        }}
+        .nxq-header-action {{
+            display: flex;
+            justify-content: flex-end;
+            width: 100%;
+        }}
+        .nxq-header-action [data-testid="stButton"] {{
+            width: 100%;
+        }}
+        .nxq-header-action button {{
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            border: 1px solid rgba(121, 165, 255, 0.32) !important;
+            background: rgba(24, 38, 64, 0.85) !important;
+            box-shadow: 0 10px 25px rgba(2, 14, 34, 0.55);
+            color: transparent !important;
+            position: relative;
+        }}
+        .nxq-header-action button::after {{
+            content: "9";
+            color: #9fc8ff;
+            font-size: 1.25rem;
+            display: inline-block;
+        }}
+        .nxq-header-action button:hover::after {{
+            color: #c0deff;
+        }}
+        .nxq-header-exports {{
+            background: rgba(10, 17, 30, 0.9);
+            border: 1px solid var(--nxq-border);
+            border-radius: 16px;
+            padding: 18px 22px;
+            margin-bottom: 28px;
+        }}
+        .nxq-header-exports .nxq-export-grid {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-top: 12px;
+        }}
+        .nxq-header-exports .nxq-export-grid [data-testid="stButton"] button {{
+            border-radius: 999px;
+            padding: 0.45rem 1.1rem;
+            border: 1px solid rgba(99, 146, 255, 0.35) !important;
+            background: rgba(34, 52, 88, 0.85) !important;
+            color: #cce5ff !important;
+            font-weight: 600;
             font-size: 0.9rem;
-            opacity: 0.7;
-            margin-top: 0.75rem;
+        }}
+        .nxq-header-exports .nxq-export-grid [data-testid="stButton"] button:hover {{
+            background: rgba(48, 72, 122, 0.9) !important;
+            border-color: rgba(122, 180, 255, 0.55) !important;
+        }}
+        .nxq-upload-wrapper {{
+            display: flex;
+            justify-content: center;
+            margin-top: 10px;
+        }}
+        .nxq-upload-card {{
+            max-width: 620px;
+            width: 100%;
+            background: rgba(13, 22, 38, 0.94);
+            border: 1px solid var(--nxq-border);
+            border-radius: 20px;
+            padding: 36px 44px;
+            box-shadow: 0 24px 46px rgba(3, 10, 28, 0.55);
+        }}
+        .nxq-step-title {{
+            font-size: 1.12rem;
+            font-weight: 600;
+            margin-bottom: 24px;
+            color: #f0f6ff;
+        }}
+        .nxq-upload-card [data-testid="stFileUploader"] > label {{
+            display: none;
+        }}
+        .nxq-upload-card div[data-testid="stFileUploaderDropzone"] {{
+            border: 2px dashed rgba(140, 178, 226, 0.45);
+            border-radius: 18px;
+            background: rgba(8, 14, 26, 0.92);
+            padding: 48px 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 12px;
+            transition: border-color 0.2s ease, background-color 0.2s ease;
+        }}
+        .nxq-upload-card div[data-testid="stFileUploaderDropzone"]:hover {{
+            border-color: rgba(130, 215, 255, 0.85);
+            background: rgba(9, 17, 33, 0.96);
+        }}
+        .nxq-upload-card div[data-testid="stFileUploaderDropzone"] > div,
+        .nxq-upload-card div[data-testid="stFileUploaderDropzone"] > span {{
+            display: none;
+        }}
+        .nxq-upload-card div[data-testid="stFileUploaderDropzone"]::before {{
+            content: "91";
+            font-size: 2.6rem;
+            color: #8ed7ff;
+        }}
+        .nxq-upload-card div[data-testid="stFileUploaderDropzone"]::after {{
+            content: "Clique ou arraste novos arquivos";
+            color: #a9cfff;
+            font-size: 1.05rem;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+        }}
+        .nxq-upload-support {{
+            margin: 14px 0 0;
+            text-align: center;
+            font-size: 0.9rem;
+            color: rgba(180, 200, 230, 0.78);
+        }}
+        .nxq-demo-link {{
+            margin-top: 18px;
+            text-align: center;
+        }}
+        .nxq-demo-link [data-testid="stButton"] {{
+            display: inline-flex;
+        }}
+        .nxq-demo-link button {{
+            background: none !important;
+            border: none !important;
+            padding: 0 !important;
+            height: auto !important;
+            color: transparent !important;
+            position: relative;
+        }}
+        .nxq-demo-link button::after {{
+            content: "N\00E3o tem um arquivo? Use um exemplo de demonstra\00E7\00E3o.";
+            color: #7fb6ff;
+            text-decoration: underline;
+            font-size: 0.92rem;
+        }}
+        .nxq-demo-link button:hover::after {{
+            color: #a6d5ff;
+        }}
+        .nxq-upload-extras {{
+            max-width: 620px;
+            margin: 28px auto 0;
+            background: rgba(12, 20, 34, 0.88);
+            border: 1px solid rgba(118, 152, 211, 0.3);
+            border-radius: 16px;
+            padding: 22px 26px;
+        }}
+        .nxq-upload-extras h4 {{
+            margin-top: 0;
+        }}
+        .nxq-upload-actions {{
+            margin-top: 20px;
+        }}
+        .nxq-upload-actions [data-testid="stButton"] button {{
+            width: 100%;
+            border-radius: 12px;
+            padding: 0.75rem 1rem;
+            font-weight: 600;
+            font-size: 0.95rem;
+        }}
+        .nxq-upload-actions [data-testid="stButton"] button:first-child {{
+            background: linear-gradient(135deg, rgba(67, 97, 238, 0.9), rgba(56, 189, 248, 0.9)) !important;
+            border: none !important;
+            color: #f9fbff !important;
+            box-shadow: 0 16px 30px rgba(37, 99, 235, 0.35);
+        }}
+        .nxq-upload-actions [data-testid="stButton"] button:first-child:disabled {{
+            background: rgba(53, 74, 128, 0.6) !important;
+            box-shadow: none;
+        }}
+        .nxq-upload-actions [data-testid="stButton"] button:nth-child(2) {{
+            background: rgba(30, 41, 59, 0.9) !important;
+            border: 1px solid rgba(148, 163, 184, 0.35) !important;
+            color: rgba(203, 213, 225, 0.9) !important;
         }}
         .metric-box {{
-            background: rgba(15, 23, 42, 0.8);
-            padding: 1rem;
+            background: rgba(15, 24, 40, 0.92);
+            border: 1px solid var(--nxq-border);
             border-radius: 14px;
-            border: 1px solid rgba(148, 163, 184, 0.25);
+            padding: 1.1rem 1rem;
             text-align: center;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
         }}
         .metric-label {{
             display: block;
-            font-size: 0.8rem;
-            letter-spacing: 0.08em;
+            font-size: 0.78rem;
             text-transform: uppercase;
-            opacity: 0.6;
-            margin-bottom: 0.4rem;
+            letter-spacing: 0.08em;
+            color: rgba(190, 205, 230, 0.7);
+            margin-bottom: 0.35rem;
         }}
         .metric-value {{
-            font-size: 1.6rem;
+            font-size: 1.65rem;
             font-weight: 700;
-            color: var(--nxq-primary);
+            color: #83ccff;
         }}
         .nxq-agent-card {{
-            border: 1px solid rgba(148, 163, 184, 0.3);
+            border: 1px solid var(--nxq-border);
             border-radius: 14px;
-            padding: 1rem;
-            background: rgba(15, 23, 42, 0.7);
+            background: rgba(14, 22, 38, 0.9);
             text-align: center;
+            padding: 1rem;
             min-height: 110px;
         }}
         .nxq-agent-card strong {{
             display: block;
-            margin-bottom: 0.35rem;
-            font-size: 0.95rem;
+            margin-bottom: 0.4rem;
         }}
         .nxq-agent-status {{
             display: inline-flex;
             align-items: center;
             gap: 0.4rem;
-            font-size: 0.82rem;
-            padding: 0.25rem 0.6rem;
             border-radius: 999px;
-            background: rgba(37, 99, 235, 0.18);
+            padding: 0.25rem 0.7rem;
+            font-size: 0.82rem;
+            background: rgba(59, 130, 246, 0.18);
         }}
         .nxq-agent-status.running {{
             background: rgba(56, 178, 172, 0.18);
         }}
         .nxq-agent-status.completed {{
-            background: rgba(22, 163, 74, 0.2);
+            background: rgba(34, 197, 94, 0.18);
         }}
         .nxq-agent-status.error {{
-            background: rgba(239, 68, 68, 0.2);
+            background: rgba(248, 113, 113, 0.18);
         }}
         .nxq-view-tabs .st-bc {{
             display: flex;
             flex-wrap: wrap;
-            gap: 0.5rem;
+            gap: 0.6rem;
         }}
         .nxq-view-tabs .st-bc div[role="radiogroup"] > label {{
             border: 1px solid rgba(148, 163, 184, 0.35);
             border-radius: 999px;
-            padding: 0.4rem 1.1rem;
-            background: rgba(15, 23, 42, 0.8);
-            cursor: pointer;
+            padding: 0.45rem 1.2rem;
+            background: rgba(20, 30, 48, 0.85);
+            font-weight: 500;
         }}
         .nxq-view-tabs .st-bc div[role="radiogroup"] > label:hover {{
-            border-color: var(--nxq-primary);
+            border-color: rgba(125, 196, 255, 0.7);
         }}
         .nxq-sticky-chat {{
             position: sticky;
-            top: 6.75rem;
+            top: 6.5rem;
         }}
         .chat-panel {{
-            background: rgba(15, 23, 42, 0.85);
+            background: rgba(12, 20, 35, 0.92);
+            border: 1px solid rgba(110, 145, 210, 0.28);
             border-radius: 18px;
-            border: 1px solid rgba(148, 163, 184, 0.25);
-            padding: 1.25rem;
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+            padding: 1.3rem;
+            box-shadow: 0 18px 38px rgba(3, 10, 28, 0.55);
         }}
         .chat-history {{
             max-height: 360px;
@@ -567,10 +719,10 @@ def _inject_theme() -> None:
             border-radius: 12px;
             margin-bottom: 0.6rem;
             font-size: 0.95rem;
-            border: 1px solid rgba(148, 163, 184, 0.25);
+            border: 1px solid rgba(120, 160, 215, 0.28);
         }}
         .chat-bubble--assistant {{
-            background: rgba(37, 99, 235, 0.12);
+            background: rgba(59, 130, 246, 0.12);
         }}
         .chat-bubble--user {{
             background: rgba(56, 178, 172, 0.12);
@@ -579,53 +731,39 @@ def _inject_theme() -> None:
             display: block;
             font-size: 0.75rem;
             text-transform: uppercase;
-            letter-spacing: 0.06em;
-            opacity: 0.65;
+            letter-spacing: 0.05em;
+            color: rgba(198, 212, 238, 0.65);
             margin-bottom: 0.25rem;
         }}
         .chat-placeholder {{
             padding: 1rem;
             border-radius: 12px;
-            border: 1px dashed rgba(148, 163, 184, 0.3);
+            border: 1px dashed rgba(120, 160, 210, 0.35);
             text-align: center;
-            opacity: 0.7;
+            color: rgba(198, 212, 238, 0.7);
         }}
         .nxq-modal {{
             position: fixed;
-            top: 76px;
+            top: 82px;
             right: 48px;
-            width: min(420px, 90vw);
+            width: min(420px, 92vw);
             max-height: 70vh;
             overflow-y: auto;
-            background: rgba(15, 23, 42, 0.96);
-            border: 1px solid rgba(148, 163, 184, 0.35);
+            background: rgba(11, 18, 32, 0.96);
+            border: 1px solid rgba(120, 160, 210, 0.35);
             border-radius: 16px;
             padding: 1.25rem;
-            box-shadow: 0 20px 45px rgba(2, 6, 23, 0.55);
+            box-shadow: 0 24px 45px rgba(2, 8, 22, 0.6);
             z-index: 100;
         }}
-        .nxq-modal h4 {{
-            margin-top: 0;
-            margin-bottom: 0.75rem;
-        }}
         .nxq-log-item {{
-            border-left: 3px solid rgba(37, 99, 235, 0.4);
-            padding: 0.5rem 0.75rem;
+            border-left: 3px solid rgba(59, 130, 246, 0.45);
+            padding: 0.55rem 0.75rem;
             margin-bottom: 0.5rem;
-            background: rgba(17, 24, 39, 0.8);
-        }}
-        .nxq-log-item small {{
-            display: block;
-            opacity: 0.6;
-            font-size: 0.75rem;
+            background: rgba(16, 24, 40, 0.85);
         }}
     </style>
-    """.format(
-        primary=PRIMARY_COLOR,
-        accent=ACCENT_COLOR,
-        background=BACKGROUND_COLOR,
-        text=TEXT_COLOR,
-    )
+    """
     st.markdown(css, unsafe_allow_html=True)
 
 
@@ -687,68 +825,67 @@ def _agent_card_html(agent: str, status: str) -> str:
     )
 
 
+
 def _render_header() -> None:
     pipeline_step = st.session_state.get("pipelineStep", "UPLOAD")
     current_view = st.session_state.get("activeView", "report")
     report_choices = _prepare_report_choices()
 
-    with st.container():
-        st.markdown("<div class='nxq-header'>", unsafe_allow_html=True)
-        st.markdown("<div class='nxq-header-grid'>", unsafe_allow_html=True)
-        cols = st.columns([3, 2], gap="large")
-        with cols[0]:
-            st.markdown(
-                "<div class='nxq-header-brand'>"
-                "<div class='nxq-logo'>NQ</div>"
-                "<div>"
-                "<h2>Nexus QuantumI2A2</h2>"
-                "<p>SPA fiscal interativa orquestrada por IA multiagente.</p>"
-                "</div>"
-                "</div>",
-                unsafe_allow_html=True,
-            )
-        with cols[1]:
-            status_text = {
-                "UPLOAD": "Upload",
-                "PROCESSING": "Processando",
-                "COMPLETE": "Concluido",
-                "ERROR": "Erro",
-            }.get(pipeline_step, pipeline_step)
-            st.markdown(
-                f"<span class='nxq-status-chip'>Etapa atual: {status_text}</span>",
-                unsafe_allow_html=True,
-            )
-            toggle_label = "Ocultar logs" if st.session_state.get("show_logs_panel") else "Ver logs"
-            if st.button(toggle_label, key="toggle_logs"):
-                st.session_state["show_logs_panel"] = not st.session_state.get("show_logs_panel")
-                st.experimental_rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
+    brand_html = """<div class='nxq-brand'>
+    <div class='nxq-brand-logo'>
+        <svg viewBox=\"0 0 36 36\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">
+            <defs>
+                <linearGradient id=\"nxq-logo-gradient\" x1=\"4\" y1=\"4\" x2=\"32\" y2=\"32\" gradientUnits=\"userSpaceOnUse\">
+                    <stop stop-color=\"#60a5fa\"/>
+                    <stop offset=\"1\" stop-color=\"#38bdf8\"/>
+                </linearGradient>
+            </defs>
+            <path d=\"M8 28V8L18 18L28 8V28\" stroke=\"url(#nxq-logo-gradient)\" stroke-width=\"3.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>
+            <path d=\"M8 28L18 18L28 28\" stroke=\"url(#nxq-logo-gradient)\" stroke-width=\"3.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" opacity=\"0.6\"/>
+        </svg>
+    </div>
+    <div class='nxq-brand-text'>
+        <h1 class='nxq-brand-name'>Nexus <span>QuantumI2A2</span></h1>
+        <p class='nxq-brand-tagline'>Interactive Insight &amp; Intelligence from Fiscal Analysis</p>
+    </div>
+</div>"""
 
-        if pipeline_step == "COMPLETE" and current_view == "report" and report_choices:
-            st.markdown("<div class='nxq-actions'>", unsafe_allow_html=True)
-            action_cols = st.columns([2, 3], gap="small")
-            labels = [label for label, _ in report_choices]
-            default_index = min(st.session_state.get("selected_report_index", 0), len(labels) - 1)
-            with action_cols[0]:
-                selection = st.selectbox(
-                    "Documento para exportar",
-                    labels,
-                    index=default_index,
-                    label_visibility="collapsed",
-                )
-            selected_index = labels.index(selection)
-            st.session_state["selected_report_index"] = selected_index
-            dataset = report_choices[selected_index][1]
-            with action_cols[1]:
-                export_labels = ["PDF", "DOCX", "HTML", "MD", "SPED"]
-                export_cols = st.columns(len(export_labels), gap="small")
-                for idx, label in enumerate(export_labels):
-                    if export_cols[idx].button(label, key=f"export_{label.lower()}"):
-                        _trigger_export(label, dataset)
+    st.markdown("<div class='nxq-header'>", unsafe_allow_html=True)
+    header_cols = st.columns([6, 1], gap="large")
+    with header_cols[0]:
+        st.markdown(brand_html, unsafe_allow_html=True)
+    with header_cols[1]:
+        st.markdown("<div class='nxq-header-action'>", unsafe_allow_html=True)
+        if st.button(" ", key="toggle_logs"):
+            st.session_state["show_logs_panel"] = not st.session_state.get("show_logs_panel")
+            st.experimental_rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    if pipeline_step == "COMPLETE" and current_view == "report" and report_choices:
+        st.markdown("<div class='nxq-header-exports'>", unsafe_allow_html=True)
+        selector_col, actions_col = st.columns([2, 3], gap="large")
+        labels = [label for label, _ in report_choices]
+        default_index = min(st.session_state.get("selected_report_index", 0), len(labels) - 1)
+        with selector_col:
+            selection = st.selectbox(
+                "Documento para exportar",
+                labels,
+                index=default_index,
+                label_visibility="collapsed",
+            )
+        selected_index = labels.index(selection)
+        st.session_state["selected_report_index"] = selected_index
+        dataset = report_choices[selected_index][1]
+        with actions_col:
+            st.markdown("<div class='nxq-export-grid'>", unsafe_allow_html=True)
+            export_labels = ["PDF", "DOCX", "HTML", "MD", "SPED"]
+            export_cols = st.columns(len(export_labels))
+            for idx, label in enumerate(export_labels):
+                if export_cols[idx].button(label, key=f"export_{label.lower()}"):
+                    _trigger_export(label, dataset)
             st.markdown("</div>", unsafe_allow_html=True)
-
         st.markdown("</div>", unsafe_allow_html=True)
-
 
 def _render_pending_export() -> None:
     payload = st.session_state.get("last_export")
@@ -837,26 +974,21 @@ def _request_interdoc_comparison() -> None:
 
 
 def render_upload_view() -> None:
-    st.subheader("Upload de arquivos")
-    st.markdown(
-        "Prepare os documentos fiscais para processamento. Arraste e solte arquivos ou escolha manualmente."
+    st.markdown("<div class='nxq-upload-wrapper'><div class='nxq-upload-card'>", unsafe_allow_html=True)
+    st.markdown("<div class='nxq-step-title'>1. Upload de Arquivos</div>", unsafe_allow_html=True)
+    files = st.file_uploader(
+        "Clique ou arraste novos arquivos",
+        type=["xml", "csv", "xlsx", "pdf", "png", "jpg", "zip"],
+        accept_multiple_files=True,
+        label_visibility="collapsed",
+        key="primary_uploader",
     )
-    with st.container():
-        st.markdown("<div class='nxq-upload'>", unsafe_allow_html=True)
-        files = st.file_uploader(
-            "Clique ou arraste novos arquivos",
-            type=["xml", "csv", "xlsx", "pdf", "png", "jpg", "zip"],
-            accept_multiple_files=True,
-            label_visibility="collapsed",
-            key="primary_uploader",
-        )
-        st.markdown(
-            "<p class='nxq-upload-help'>Formatos suportados: XML, CSV, XLSX, PDF, imagens e ZIP (limite 200 MB).</p>",
-            unsafe_allow_html=True,
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("<p class='nxq-upload-support'>Suportados: XML, CSV, XLSX, PDF, Imagens (PNG, JPG), ZIP (limite de 200MB)</p>", unsafe_allow_html=True)
+    st.markdown("<div class='nxq-demo-link'>", unsafe_allow_html=True)
+    demo_clicked = st.button(" ", key="nxq_demo_link")
+    st.markdown("</div></div></div>", unsafe_allow_html=True)
 
-    if st.button("Carregar exemplo de demonstracao", key="load_demo"):
+    if demo_clicked:
         st.session_state["demo_loaded"] = True
         st.toast("Exemplo de demonstracao pronto. Substitua pelos seus documentos reais para obter insights.")
 
@@ -868,35 +1000,40 @@ def render_upload_view() -> None:
             st.toast("Arquivos ignorados por ja estarem na fila: " + ", ".join(duplicates))
 
     queue_meta = st.session_state.get("uploaded_queue_meta", [])
-    if queue_meta:
-        queue_df = pd.DataFrame(
-            [
-                {
-                    "Arquivo": item.get("name"),
-                    "Tamanho (KB)": f"{(float(item.get('size', 0)) / 1024):.1f}" if item.get("size") else "-",
-                }
-                for item in queue_meta
-            ]
-        )
-        st.markdown("#### Arquivos na fila")
-        st.dataframe(queue_df, use_container_width=True, hide_index=True)
+    payloads_present = bool(st.session_state.get("uploaded_payloads"))
 
-    start_disabled = not bool(st.session_state.get("uploaded_payloads"))
-    actions = st.columns([1, 1])
-    with actions[0]:
-        if st.button("Iniciar analise", disabled=start_disabled, use_container_width=True):
-            st.session_state["pipelineStep"] = "PROCESSING"
-            st.session_state["analysis_errors"] = []
-            st.session_state["processing_status"] = ""
-            st.session_state["agent_status"] = {agent: "running" for agent in AGENT_STEPS}
-            st.experimental_rerun()
-    with actions[1]:
-        if st.button("Limpar fila", disabled=not queue_meta, use_container_width=True):
-            st.session_state["uploaded_payloads"] = []
-            st.session_state["uploaded_names"] = []
-            st.session_state["uploaded_queue_meta"] = []
-            st.toast("Fila de arquivos limpa.")
+    if queue_meta or payloads_present:
+        st.markdown("<div class='nxq-upload-extras'>", unsafe_allow_html=True)
+        if queue_meta:
+            queue_df = pd.DataFrame(
+                [
+                    {
+                        "Arquivo": item.get("name"),
+                        "Tamanho (KB)": f"{(float(item.get('size', 0)) / 1024):.1f}" if item.get("size") else "-",
+                    }
+                    for item in queue_meta
+                ]
+            )
+            st.markdown("#### Arquivos na fila")
+            st.dataframe(queue_df, use_container_width=True, hide_index=True)
 
+        st.markdown("<div class='nxq-upload-actions'>", unsafe_allow_html=True)
+        action_cols = st.columns(2, gap="large")
+        with action_cols[0]:
+            if st.button("Iniciar analise", disabled=not payloads_present, use_container_width=True):
+                st.session_state["pipelineStep"] = "PROCESSING"
+                st.session_state["analysis_errors"] = []
+                st.session_state["processing_status"] = ""
+                st.session_state["agent_status"] = {agent: "running" for agent in AGENT_STEPS}
+                st.experimental_rerun()
+        with action_cols[1]:
+            if st.button("Limpar fila", disabled=not queue_meta, use_container_width=True):
+                st.session_state["uploaded_payloads"] = []
+                st.session_state["uploaded_names"] = []
+                st.session_state["uploaded_queue_meta"] = []
+                st.toast("Fila de arquivos limpa.")
+        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
 def render_processing_view() -> None:
     st.subheader("Processamento com agentes especialistas")
