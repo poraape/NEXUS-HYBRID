@@ -1,0 +1,17 @@
+hf-sync.ymlname: Sync to Hugging Face
+on:
+  push:
+    branches: [main]
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Push to Hugging Face
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git config --global user.email "github-actions@users.noreply.github.com"
+          git config --global user.name "GitHub Actions"
+          git remote add hf https://huggingface.co/spaces/medjotavesf/Nexus-QuantumI2A2
+          git push hf main --force
