@@ -1,19 +1,18 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import html
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
 import requests
 import streamlit as st
 
-# Backward compatibility for Streamlit rerun API changes
 if not hasattr(st, "experimental_rerun") and hasattr(st, "rerun"):
     st.experimental_rerun = st.rerun  # type: ignore[attr-defined]
 
-if TYPE_CHECKING:  # pragma: no cover - hints only
+if TYPE_CHECKING:  # pragma: no cover
     from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 from utils.insights import render_discrepancies_panel, show_incremental_insights
@@ -21,25 +20,31 @@ from utils.insights import render_discrepancies_panel, show_incremental_insights
 
 API_BASE_URL = st.secrets.get("API_BASE_URL", "http://backend:8000")
 
-PRIMARY_COLOR = "#2563eb"  # Tailwind blue-600
-ACCENT_COLOR = "#38b2ac"  # Tailwind teal-400
-BACKGROUND_COLOR = "#111827"  # Tailwind gray-900
-TEXT_COLOR = "#f3f4f6"  # Tailwind gray-100
+PRIMARY_COLOR = "#2563eb"
+ACCENT_COLOR = "#38b2ac"
+BACKGROUND_COLOR = "#040b18"
+TEXT_COLOR = "#eef5ff"
 
-AGENT_STEPS = ["OCR", "Auditor", "Classificador", "Contador"]
+AGENT_STEPS = [
+    ("ocr", "1. Ag. OCR"),
+    ("auditor", "2. Ag. Auditor"),
+    ("classifier", "3. Ag. Classificador"),
+    ("intelligence", "4. Ag. Inteligência"),
+    ("accountant", "5. Ag. Contador"),
+]
+
 EXPORT_ENDPOINTS = {
-    "DOCX": ("docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "relatorio.docx"),
-    "PDF": ("pdf", "application/pdf", "relatorio.pdf"),
-    "HTML": ("html", "text/html", "relatorio.html"),
-    "SPED": ("sped", "text/plain", "sped_efd.txt"),
+    "docx": ("docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "relatorio.docx"),
+    "html": ("html", "text/html", "relatorio.html"),
+    "pdf": ("pdf", "application/pdf", "relatorio.pdf"),
+    "md": ("md", "text/markdown", "relatorio.md"),
+    "sped": ("sped", "text/plain", "sped_efd.txt"),
 }
 
 INITIAL_CHAT_MESSAGE = {
-    "role": "assistant",
-    "content": (
-        "Ola! Carregue seus arquivos fiscais para comecar a analise. "
-        "Voce pode enviar novos documentos a qualquer momento pelo painel de conversa."
-    ),
+    "id": "assistant-hello",
+    "sender": "ai",
+    "text": "Olá! Posso ajudar a interpretar os resultados fiscais. Faça uma pergunta ou envie novos documentos.",
 }
 
 
@@ -47,8 +52,26 @@ def _format_brl(value: float) -> str:
     return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def _format_file_size(size_bytes: Optional[float]) -> str:
+    if size_bytes is None:
+        return "-"
+    return f"{size_bytes / 1024:.1f} KB"
+
+
 def _prepare_payload(file: "UploadedFile") -> Tuple[str, bytes, str]:
     return file.name, file.getvalue(), file.type or "application/octet-stream"
+
+
+def _set_toast(message: Optional[str], level: str = "error") -> None:
+    st.session_state["toast"] = {"message": message, "level": level} if message else None
+
+
+def _clear_analysis_state() -> None:
+    st.session_state["analysis_results"] = []
+    st.session_state["aggregated_overview"] = None
+    st.session_state["aggregated_totals"] = {}
+    st.session_state["aggregated_docs"] = []
+    st.session_state["logs_payload"] = []
 
 
 def process_uploaded_file(payload: Tuple[str, bytes, str]) -> Dict[str, Any]:
@@ -56,351 +79,82 @@ def process_uploaded_file(payload: Tuple[str, bytes, str]) -> Dict[str, Any]:
     endpoint = f"{API_BASE_URL}/upload/file"
     if name.lower().endswith(".zip"):
         endpoint = f"{API_BASE_URL}/upload/zip"
-
-    response = requests.post(
-        endpoint,
-        files={"file": (name, content, mime)},
-        timeout=300,
-    )
+    response = requests.post(endpoint, files={"file": (name, content, mime)}, timeout=300)
     response.raise_for_status()
     return response.json()
 
 
-def aggregate_results(responses: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
-    reports: List[Dict[str, Any]] = []
-    logs: List[Dict[str, Any]] = []
-    docs: List[Dict[str, Any]] = []
-    totals = {"vNF": 0.0, "vProd": 0.0, "vICMS": 0.0, "vPIS": 0.0, "vCOFINS": 0.0}
-
-    for response in responses:
-        current_reports = response.get("reports") or []
-        current_logs = response.get("logs") or []
-        reports.extend(current_reports)
-        logs.extend(current_logs)
-
-        for report in current_reports:
-            source = report.get("source") or {}
-            itens = source.get("itens") or []
-            valor_produtos = sum(float(item.get("valor") or 0) for item in itens)
-            taxes_resumo = ((report.get("taxes") or {}).get("resumo") or {})
-
-            totals["vProd"] += valor_produtos
-            totals["vNF"] += valor_produtos
-            totals["vICMS"] += float(taxes_resumo.get("totalICMS") or 0)
-            totals["vPIS"] += float(taxes_resumo.get("totalPIS") or 0)
-            totals["vCOFINS"] += float(taxes_resumo.get("totalCOFINS") or 0)
-
-            docs.append(
-                {
-                    "documento": report.get("title"),
-                    "itens": len(itens),
-                    "valor_produtos": valor_produtos,
-                    "score": (report.get("compliance") or {}).get("score"),
-                }
-            )
-
-    return {"reports": reports, "logs": logs, "docs": docs, "totals": totals}
-
-
-def _enqueue_files(files: Iterable["UploadedFile"]) -> Tuple[int, List[str]]:
-    added = 0
-    duplicates: List[str] = []
-    queue_meta = st.session_state.setdefault("uploaded_queue_meta", [])
-    existing_names = set(st.session_state.get("uploaded_names", []))
-
-    for file in files:
-        if file.name not in existing_names:
-            payload = _prepare_payload(file)
-            st.session_state["uploaded_payloads"].append(payload)
-            st.session_state["uploaded_names"].append(file.name)
-            queue_meta.append({"name": file.name, "size": getattr(file, "size", 0)})
-            added += 1
-            existing_names.add(file.name)
-        else:
-            duplicates.append(file.name)
-    return added, duplicates
-
-
-def _first_non_empty(itens: Iterable[Dict[str, Any]], keys: Iterable[str]) -> str:
-    for item in itens:
-        for key in keys:
-            value = item.get(key)
-            if value:
-                return str(value)
-    return ""
-
-
-def _prepare_docs_for_comparison(results: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    docs: List[Dict[str, Any]] = []
-    for result in results:
-        reports = result.get("reports") or []
-        file_source = result.get("source")
-        for report in reports:
-            source_snapshot = report.get("source") or {}
-            itens = source_snapshot.get("itens") or []
-            totals = report.get("taxes") or {}
-            resumo = totals.get("resumo") or {}
-            classification = report.get("classification") or {}
-
-            valor_produtos = 0.0
-            for item in itens:
-                try:
-                    valor_produtos += float(item.get("valor") or 0.0)
-                except (TypeError, ValueError):
-                    continue
-
-            icms_total = float(resumo.get("totalICMS") or 0.0)
-            pis_total = float(resumo.get("totalPIS") or 0.0)
-            cofins_total = float(resumo.get("totalCOFINS") or 0.0)
-
-            aliquota_icms = icms_total / valor_produtos if valor_produtos else 0.0
-            aliquota_pis = pis_total / valor_produtos if valor_produtos else 0.0
-            aliquota_cofins = cofins_total / valor_produtos if valor_produtos else 0.0
-
-            doc_entry = {
-                "source": file_source or report.get("title"),
-                "emitente": classification.get("emitente")
-                or (source_snapshot.get("emitente") or {}).get("nome"),
-                "cfop": classification.get("cfop") or _first_non_empty(itens, ["cfop"]),
-                "cst": _first_non_empty(itens, ["cst", "cst_icms", "cstIcms"]),
-                "ncm": classification.get("ncm") or _first_non_empty(itens, ["ncm"]),
-                "regime": totals.get("regime"),
-                "aliquota_icms": aliquota_icms,
-                "aliquota_pis": aliquota_pis,
-                "aliquota_cofins": aliquota_cofins,
-                "vNF": valor_produtos,
-                "vProd": valor_produtos,
-                "vICMS": icms_total,
-                "vPIS": pis_total,
-                "vCOFINS": cofins_total,
-            }
-            docs.append(doc_entry)
-    return docs
-
-
-def _render_chat_history(messages: Iterable[Dict[str, str]]) -> str:
-    rows: List[str] = []
-    for message in messages:
-        role = message.get("role", "assistant")
-        role_class = "user" if role == "user" else "assistant"
-        label = "Voce" if role == "user" else "Nexus"
-        safe_content = html.escape(message.get("content", "")).replace("\n", "<br>")
-        rows.append(
-            """
-            <div class='chat-bubble chat-bubble--{role_class}'>
-                <span class='chat-meta'>{label}</span>
-                <p>{safe}</p>
-            </div>
-            """.format(role_class=role_class, label=label, safe=safe_content)
+def _trigger_export(fmt: str, dataset: Dict[str, Any]) -> None:
+    if fmt not in EXPORT_ENDPOINTS:
+        _set_toast(f"Formato de exportação desconhecido: {fmt}")
+        return
+    endpoint, mime, default_name = EXPORT_ENDPOINTS[fmt]
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/export/{endpoint}",
+            json={"dataset": dataset},
+            timeout=120,
         )
-    if not rows:
-        rows.append(
-            "<div class='chat-placeholder'>Envie uma pergunta ou anexe novos arquivos para complementar a analise.</div>"
-        )
-    return "<div class='chat-history'>" + "".join(rows) + "</div>"
-
-
-def _build_chat_reply(prompt: str) -> str:
-    prompt = prompt.strip()
-    aggregated = st.session_state.get("aggregated_overview")
-    if aggregated:
-        totals = aggregated.get("totals", {})
-        docs = aggregated.get("docs", [])
-        summary_parts = [
-            f"Acompanhamos {len(docs)} documento(s) consolidados.",
-            f"O valor total dos produtos esta em {_format_brl(totals.get('vProd', 0.0))}.",
-        ]
-        if totals.get("vICMS"):
-            summary_parts.append(f"A projecao de ICMS soma {_format_brl(totals.get('vICMS', 0.0))}.")
-        return "\n\n".join([f'Mensagem recebida: "{prompt}"', *summary_parts])
-    return (
-        "Mensagem recebida, mas ainda nao ha resultados processados. "
-        "Adicione arquivos e execute a analise incremental para obter respostas contextualizadas."
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        _set_toast(f"Falha ao exportar ({fmt.upper()}): {exc}")
+        return
+    filename = dataset.get("title") or default_name
+    st.download_button(
+        label=f"Baixar {fmt.upper()}",
+        data=response.content,
+        mime=mime,
+        file_name=filename if filename else default_name,
+        key=f"download-{fmt}",
     )
 
 
-def display_summary(aggregated: Dict[str, Any]) -> None:
-    totals = aggregated.get("totals", {})
-    docs = aggregated.get("docs", [])
-
-    metrics = [
-        ("Documentos processados", f"{len(docs)}"),
-        ("Valor total dos produtos", _format_brl(totals.get("vProd", 0.0))),
-        ("ICMS estimado", _format_brl(totals.get("vICMS", 0.0))),
-    ]
-
-    columns = st.columns(len(metrics))
-    for column, (label, value) in zip(columns, metrics):
-        column.markdown(
-            f"""
-            <div class="metric-box">
-                <span class="metric-label">{label}</span>
-                <div class="metric-value">{value}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    if docs:
-        df = pd.DataFrame(docs)
-        df.rename(
-            columns={
-                "documento": "Documento",
-                "itens": "Itens",
-                "valor_produtos": "Valor dos Produtos",
-                "score": "Score",
-            },
-            inplace=True,
-        )
-        formatted = df.assign(
-            **{
-                "Valor dos Produtos": df["Valor dos Produtos"].map(_format_brl),
-                "Score": df["Score"].map(lambda x: f"{x:.2f}" if x is not None else "-"),
-            }
-        )
-        st.dataframe(formatted, use_container_width=True)
-    else:
-        st.info("Nenhum documento valido foi consolidado ate o momento.")
-
-
-def _slugify(text: str) -> str:
-    cleaned = "".join(char.lower() if char.isalnum() else "_" for char in text)
-    slug = "_".join(filter(None, cleaned.split("_")))
-    return slug or "relatorio"
-
-
-def _build_markdown_export(dataset: Dict[str, Any]) -> Tuple[bytes, str, str]:
-    title = dataset.get("title") or "Relatorio Fiscal"
-    totals = (dataset.get("taxes") or {}).get("resumo") or {}
-    compliance = dataset.get("compliance") or {}
-    inconsistencies = compliance.get("inconsistencies") or []
-
-    lines = [
-        f"# {title}",
-        "",
-        "## Resumo de tributos",
-    ]
-    if totals:
-        for key, value in totals.items():
-            lines.append(f"- {key}: {value}")
-    else:
-        lines.append("- Totais nao informados.")
-
-    lines.append("")
-    lines.append("## Inconsistencias")
-    if inconsistencies:
-        for item in inconsistencies:
-            code = item.get("code") or "-"
-            message = item.get("message") or "-"
-            severity = item.get("severity") or "-"
-            lines.append(f"- [{severity}] {code}: {message}")
-    else:
-        lines.append("- Nenhuma inconsistencia registrada.")
-
-    content = "\n".join(lines)
-    filename = f"{_slugify(title)}.md"
-    return content.encode("utf-8"), "text/markdown", filename
-
-
-def _reset_app_state(preserve_chat: bool = True) -> None:
-    previous_chat = st.session_state.get("chat_messages") if preserve_chat else None
-    st.session_state.clear()
-    st.session_state["pipelineStep"] = "UPLOAD"
-    st.session_state["activeView"] = "report"
-    st.session_state["uploaded_payloads"] = []
-    st.session_state["uploaded_names"] = []
-    st.session_state["uploaded_queue_meta"] = []
-    st.session_state["analysis_results"] = []
-    st.session_state["aggregated_overview"] = None
-    st.session_state["aggregated_totals"] = {}
-    st.session_state["aggregated_docs"] = []
-    st.session_state["analysis_errors"] = []
-    st.session_state["analysis_completed"] = False
-    st.session_state["chat_messages"] = (
-        [dict(item) for item in previous_chat] if previous_chat else [dict(INITIAL_CHAT_MESSAGE)]
-    )
-    st.session_state["chat_feedback"] = None
-    st.session_state["comparison_result"] = None
-    st.session_state["comparison_signature"] = ""
-    st.session_state["show_logs_panel"] = False
-    st.session_state["agent_status"] = {agent: "pending" for agent in AGENT_STEPS}
-    st.session_state["last_export"] = None
-    st.session_state["processing_status"] = ""
-    st.session_state["demo_loaded"] = False
-    st.session_state["chat_streaming"] = False
-    st.session_state["selected_report_index"] = 0
-
-
-def _ensure_state_defaults() -> None:
-    state_defaults: Dict[str, Any] = {
+def _init_session_state() -> None:
+    defaults: Dict[str, Any] = {
         "pipelineStep": "UPLOAD",
         "activeView": "report",
-        "uploaded_payloads": [],
-        "uploaded_names": [],
-        "uploaded_queue_meta": [],
+        "showLogs": False,
+        "upload_queue": [],
         "analysis_results": [],
         "aggregated_overview": None,
         "aggregated_totals": {},
         "aggregated_docs": [],
-        "analysis_errors": [],
-        "analysis_completed": False,
-        "chat_messages": [dict(INITIAL_CHAT_MESSAGE)],
-        "chat_feedback": None,
-        "comparison_result": None,
-        "comparison_signature": "",
-        "show_logs_panel": False,
-        "agent_status": {agent: "pending" for agent in AGENT_STEPS},
-        "last_export": None,
+        "logs_payload": [],
+        "agent_status": {step_id: "pending" for step_id, _ in AGENT_STEPS},
         "processing_status": "",
-        "demo_loaded": False,
+        "chat_messages": [dict(INITIAL_CHAT_MESSAGE)],
         "chat_streaming": False,
-        "selected_report_index": 0,
+        "toast": None,
+        "comparison_result": None,
+        "analysis_history": [],
     }
-    for key, default in state_defaults.items():
+    for key, value in defaults.items():
         if key not in st.session_state:
-            if isinstance(default, list):
-                if default and isinstance(default[0], dict):
-                    st.session_state[key] = [dict(item) for item in default]
-                else:
-                    st.session_state[key] = list(default)
-            elif isinstance(default, dict):
-                st.session_state[key] = dict(default)
-            else:
-                st.session_state[key] = default
-    for agent in AGENT_STEPS:
-        st.session_state["agent_status"].setdefault(agent, "pending")
-
-
+            st.session_state[key] = value if not isinstance(value, list) else list(value)
 
 
 def _inject_theme() -> None:
-    st.set_page_config(page_title="Nexus QuantumI2A2", page_icon="NQ", layout="wide", initial_sidebar_state="collapsed")
-
+    st.set_page_config(
+        page_title="Nexus QuantumI2A2",
+        page_icon="💠",
+        layout="wide",
+        initial_sidebar_state="collapsed",
+    )
     assets_path = Path(__file__).parent / "assets" / "theme.css"
     if assets_path.exists():
         st.markdown(f"<style>{assets_path.read_text()}</style>", unsafe_allow_html=True)
-
     css = f"""
     <style>
-        :root {{
-            --nxq-primary: {PRIMARY_COLOR};
-            --nxq-accent: {ACCENT_COLOR};
-            --nxq-bg: #040b18;
-            --nxq-panel: rgba(11, 19, 34, 0.94);
-            --nxq-border: rgba(120, 160, 210, 0.35);
-            --nxq-text: #eef5ff;
-            --nxq-muted: #90a9d4;
-        }}
-        body {{
-            background: var(--nxq-bg);
-            color: var(--nxq-text);
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        }}
-        header, [data-testid="stSidebar"], [data-testid="collapsedControl"], [data-testid="stToolbar"] {{
+        header, [data-testid=\"stSidebar\"], [data-testid=\"collapsedControl\"], [data-testid=\"stToolbar\"] {{
             display: none !important;
         }}
-        [data-testid="stAppViewContainer"] > .main {{
-            background: var(--nxq-bg);
+        body {{
+            background: {BACKGROUND_COLOR};
+            color: {TEXT_COLOR};
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }}
+        [data-testid=\"stAppViewContainer\"] > .main {{
+            background: {BACKGROUND_COLOR};
         }}
         .block-container {{
             padding: 0 2.4rem 4rem;
@@ -411,100 +165,68 @@ def _inject_theme() -> None:
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 24px 0 18px;
-            margin-bottom: 28px;
-            border-bottom: 1px solid rgba(110, 145, 210, 0.22);
+            padding: 20px 0 18px;
+            margin-bottom: 26px;
+            border-bottom: 1px solid rgba(130, 160, 210, 0.25);
         }}
-        .nxq-brand {{
-            display: flex;
-            align-items: center;
-            gap: 18px;
-        }}
+        .nxq-brand {{ display: flex; align-items: center; gap: 18px; }}
         .nxq-brand-logo {{
             width: 56px;
             height: 56px;
             border-radius: 16px;
             border: 1px solid rgba(118, 227, 255, 0.45);
-            background: linear-gradient(135deg, rgba(59, 130, 246, 0.38), rgba(20, 184, 166, 0.38));
+            background: linear-gradient(140deg, rgba(59, 130, 246, 0.4), rgba(20, 184, 166, 0.4));
             display: flex;
             align-items: center;
             justify-content: center;
             padding: 9px;
             box-shadow: 0 14px 30px rgba(3, 11, 28, 0.55);
         }}
-        .nxq-brand-logo svg {{
-            width: 100%;
-            height: 100%;
-        }}
-        .nxq-brand-text {{
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-        }}
-        .nxq-brand-name {{
+        .nxq-brand-logo svg { width: 100%; height: 100%; }
+        .nxq-brand-title {
             margin: 0;
             font-size: 1.9rem;
             font-weight: 700;
-            line-height: 1.1;
             background: linear-gradient(100deg, #9fdcff 0%, #6ee7d7 70%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-        }}
-        .nxq-brand-tagline {{
-            margin: 0;
+        }
+        .nxq-brand-subtitle {
+            margin: 2px 0 0;
             font-size: 0.95rem;
             color: rgba(198, 212, 238, 0.8);
-            letter-spacing: 0.015em;
-        }}
-        .nxq-header-action button {{
-            display: none;
-        }}
-        .nxq-header-exports {{
-            background: rgba(10, 17, 30, 0.92);
-            border: 1px solid var(--nxq-border);
-            border-radius: 18px;
-            padding: 18px 22px;
-            margin-bottom: 28px;
-        }}
-        .nxq-header-exports .nxq-export-grid {{
-            display: flex;
-            flex-wrap: wrap;
-            gap: 12px;
-            margin-top: 12px;
-        }}
-        .nxq-header-exports .nxq-export-grid [data-testid="stButton"] button {{
-            border-radius: 999px;
-            padding: 0.45rem 1.1rem;
-            border: 1px solid rgba(99, 146, 255, 0.35) !important;
-            background: rgba(34, 52, 88, 0.88) !important;
-            color: #cce5ff !important;
+        }
+        .nxq-header-actions { display: flex; align-items: center; gap: 12px; }
+        .nxq-header-actions .stButton button {
+            border-radius: 12px;
+            border: 1px solid rgba(118, 158, 238, 0.35);
+            background: rgba(14, 24, 50, 0.9);
+            color: #d8e6ff;
             font-weight: 600;
-            font-size: 0.9rem;
-        }}
-        .nxq-upload-wrapper {{
-            display: flex;
-            justify-content: center;
-            margin-top: 18px;
-        }}
-        .nxq-upload-card {{
-            max-width: 620px;
+            padding: 0.4rem 0.9rem;
+        }
+        .nxq-export-group { display: flex; gap: 8px; }
+        .nxq-export-group .stButton button {
+            width: 48px;
+            height: 48px;
+            border-radius: 14px;
+            border: 1px solid rgba(118, 180, 255, 0.35);
+            background: rgba(23, 36, 64, 0.92);
+            color: #cfe4ff;
+            font-weight: 700;
+        }
+        .nxq-upload-wrapper { display: flex; justify-content: center; margin-top: 20px; }
+        .nxq-upload-card {
+            max-width: 640px;
             width: 100%;
             background: rgba(13, 22, 38, 0.94);
-            border: 1px solid var(--nxq-border);
-            border-radius: 20px;
+            border: 1px solid rgba(118, 160, 210, 0.32);
+            border-radius: 22px;
             padding: 36px 44px;
             box-shadow: 0 24px 46px rgba(3, 10, 28, 0.55);
-        }}
-        .nxq-step-title {{
-            font-size: 1.12rem;
-            font-weight: 600;
-            margin-bottom: 24px;
-            color: #f0f6ff;
-        }}
-        .nxq-upload-card [data-testid="stFileUploader"] > label {{
-            display: none;
-        }}
-        .nxq-upload-card div[data-testid="stFileUploaderDropzone"] {{
+        }
+        .nxq-upload-title { font-size: 1.12rem; font-weight: 600; margin-bottom: 24px; }
+        .nxq-dropzone {
             border: 2px dashed rgba(140, 178, 226, 0.45);
             border-radius: 18px;
             background: rgba(8, 14, 26, 0.9);
@@ -512,747 +234,454 @@ def _inject_theme() -> None:
             display: flex;
             flex-direction: column;
             align-items: center;
-            justify-content: center;
             text-align: center;
-            position: relative;
             gap: 10px;
-        }}
-        .nxq-upload-card div[data-testid="stFileUploaderDropzone"] svg {
-            display: none !important;
         }
-        .nxq-upload-card div[data-testid="stFileUploaderDropzone"] span,
-        .nxq-upload-card div[data-testid="stFileUploaderDropzone"] p,
-        .nxq-upload-card div[data-testid="stFileUploaderDropzone"] label {{
-            display: none !important;
-        }}
-        .nxq-upload-card div[data-testid="stFileUploaderDropzone"]::before {{
-            content: "↑";
-            font-size: 2.8rem;
-            color: #8ed7ff;
-            margin-bottom: 6px;
-        }}
-        .nxq-upload-card div[data-testid="stFileUploaderDropzone"]::after {{
-            content: "Clique ou arraste novos arquivos";
-            color: #a9cfff;
-            font-size: 1.05rem;
-            font-weight: 600;
-            letter-spacing: 0.02em;
-        }}
-        .nxq-upload-card div[data-testid="stFileUploaderDropzone"] button {{
-            margin-top: 20px;
-            border-radius: 999px;
-            padding: 0.5rem 1.45rem;
-            font-weight: 600;
-            background: linear-gradient(135deg, rgba(67, 97, 238, 0.95), rgba(56, 189, 248, 0.95)) !important;
-            border: none !important;
-            color: #f9fbff !important;
-            box-shadow: 0 14px 26px rgba(37, 99, 235, 0.32);
-        }}
-        .nxq-upload-support {{
-            margin: 16px 0 0;
-            text-align: center;
-            font-size: 0.88rem;
-            color: rgba(180, 200, 230, 0.78);
-        }}
-        .nxq-demo-link button {{
-            background: none !important;
-            border: none !important;
-            padding: 0 !important;
-            height: auto !important;
-            color: transparent !important;
-            position: relative;
-        }}
-        .nxq-demo-link button::after {{
-            content: "Não tem um arquivo? Use um exemplo de demonstração.";
-            color: #7fb6ff;
-            text-decoration: underline;
-            font-size: 0.92rem;
-        }}
-        .nxq-upload-extras {{
-            max-width: 620px;
-            margin: 24px auto 0;
+        .nxq-dropzone svg { display: none; }
+        .nxq-dropzone::before { content: "\u2191"; font-size: 2.8rem; color: #8ed7ff; }
+        .nxq-dropzone::after { content: "Clique ou arraste novos arquivos"; color: #a9cfff; font-size: 1.05rem; font-weight: 600; }
+        .nxq-hint { margin-top: 16px; text-align: center; font-size: 0.88rem; color: rgba(180, 200, 230, 0.78); }
+        .nxq-demo-link .stButton button { background: none; border: none; color: #7fb6ff; text-decoration: underline; padding: 0; }
+        .nxq-upload-extras {
+            max-width: 640px;
+            margin: 26px auto 0;
             background: rgba(12, 20, 34, 0.9);
             border: 1px solid rgba(118, 152, 211, 0.3);
             border-radius: 16px;
             padding: 22px 26px;
-        }}
-        .nxq-upload-actions {{
-            margin-top: 18px;
-        }}
-        .nxq-upload-actions [data-testid="stButton"] button {{
-            width: 100%;
-            border-radius: 12px;
-            padding: 0.75rem 1rem;
-            font-weight: 600;
-            font-size: 0.95rem;
-        }}
-        .nxq-upload-actions [data-testid="stButton"]:first-child button {{
-            background: linear-gradient(135deg, rgba(67, 97, 238, 0.92), rgba(56, 189, 248, 0.92)) !important;
-            border: none !important;
-            color: #f9fbff !important;
-            box-shadow: 0 16px 30px rgba(37, 99, 235, 0.35);
-        }}
-        .nxq-upload-actions [data-testid="stButton"]:last-child button {{
-            background: rgba(30, 41, 59, 0.9) !important;
-            border: 1px solid rgba(148, 163, 184, 0.35) !important;
-            color: rgba(203, 213, 225, 0.9) !important;
-        }}
-        .metric-box {{
-            background: rgba(15, 24, 40, 0.92);
-            border: 1px solid var(--nxq-border);
-            border-radius: 14px;
-            padding: 1.1rem 1rem;
-            text-align: center;
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-        }}
-        .metric-label {{
-            display: block;
-            font-size: 0.78rem;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            color: rgba(190, 205, 230, 0.7);
-            margin-bottom: 0.35rem;
-        }}
-        .metric-value {{
-            font-size: 1.65rem;
-            font-weight: 700;
-            color: #83ccff;
-        }}
-        .nxq-agent-card {{
-            border: 1px solid var(--nxq-border);
-            border-radius: 14px;
-            background: rgba(14, 22, 38, 0.9);
-            text-align: center;
-            padding: 1rem;
-            min-height: 110px;
-        }}
-        .nxq-agent-status {{
-            display: inline-flex;
-            align-items: center;
-            gap: 0.4rem;
-            border-radius: 999px;
-            padding: 0.25rem 0.7rem;
-            font-size: 0.82rem;
-            background: rgba(59, 130, 246, 0.18);
-        }}
-        .nxq-agent-status.running {{
-            background: rgba(56, 178, 172, 0.18);
-        }}
-        .nxq-agent-status.completed {{
-            background: rgba(34, 197, 94, 0.18);
-        }}
-        .nxq-agent-status.error {{
-            background: rgba(248, 113, 113, 0.18);
-        }}
-        .nxq-view-tabs .st-bc {{
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.6rem;
-        }}
-        .nxq-view-tabs .st-bc div[role="radiogroup"] > label {{
-            border: 1px solid rgba(148, 163, 184, 0.35);
-            border-radius: 999px;
-            padding: 0.45rem 1.2rem;
-            background: rgba(20, 30, 48, 0.85);
-            font-weight: 500;
-        }}
-        .nxq-view-tabs .st-bc div[role="radiogroup"] > label:hover {{
-            border-color: rgba(125, 196, 255, 0.7);
-        }}
-        .nxq-sticky-chat {{
-            position: sticky;
-            top: 6.5rem;
-        }}
-        .chat-panel {{
-            background: rgba(12, 20, 35, 0.92);
-            border: 1px solid rgba(110, 145, 210, 0.28);
-            border-radius: 18px;
-            padding: 1.3rem;
-            box-shadow: 0 18px 38px rgba(3, 10, 28, 0.55);
-        }}
-        .nxq-modal {{
-            position: fixed;
-            top: 82px;
-            right: 48px;
-            width: min(420px, 92vw);
-            max-height: 70vh;
-            overflow-y: auto;
-            background: rgba(11, 18, 32, 0.96);
-            border: 1px solid rgba(120, 160, 210, 0.35);
-            border-radius: 16px;
-            padding: 1.25rem;
-            box-shadow: 0 24px 45px rgba(2, 8, 22, 0.6);
-            z-index: 100;
-        }}
-        .nxq-log-item {{
-            border-left: 3px solid rgba(59, 130, 246, 0.45);
-            padding: 0.55rem 0.75rem;
-            margin-bottom: 0.5rem;
-            background: rgba(16, 24, 40, 0.85);
-        }}
+        }
+        .nxq-upload-actions .stButton button { width: 100%; border-radius: 12px; padding: 0.75rem 1rem; font-weight: 600; }
+        .nxq-upload-actions .stButton:nth-child(1) button { background: linear-gradient(135deg, rgba(67,97,238,0.92), rgba(56,189,248,0.92)) !important; border: none !important; color: #f9fbff !important; }
+        .nxq-upload-actions .stButton:nth-child(2) button { background: rgba(30,41,59,0.9) !important; border: 1px solid rgba(148,163,184,0.35) !important; color: rgba(203,213,225,0.9) !important; }
+        .nxq-progress-steps { display: flex; align-items: center; gap: 10px; margin: 32px 0 18px; }
+        .nxq-progress-step { display: flex; flex-direction: column; align-items: center; gap: 6px; flex: 1; }
+        .nxq-progress-node { width: 48px; height: 48px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 600; border: 2px solid rgba(125,160,255,0.35); background: rgba(14,26,54,0.9); }
+        .nxq-progress-node.running { border-color: rgba(59,130,246,0.7); color: #9fd0ff; }
+        .nxq-progress-node.completed { border-color: rgba(34,197,94,0.7); color: #a7f3d0; }
+        .nxq-progress-node.error { border-color: rgba(248,113,113,0.8); color: #fecaca; }
+        .nxq-progress-label { font-size: 0.82rem; text-align: center; color: rgba(200,210,235,0.85); }
+        .nxq-progress-connector { height: 2px; flex: 1; background: linear-gradient(90deg, rgba(59,130,246,0.45), rgba(59,130,246,0.15)); }
+        .nxq-view-switcher .stRadio > label { display: none; }
+        .nxq-view-switcher .st-bc { display: flex; gap: 12px; flex-wrap: wrap; }
+        .nxq-view-switcher [role="radiogroup"] > label { border-radius: 999px; padding: 0.45rem 1.35rem; border: 1px solid rgba(148,163,184,0.35); background: rgba(20,30,48,0.9); font-weight: 500; }
+        .nxq-chat-panel { background: rgba(12,20,35,0.92); border: 1px solid rgba(110,145,210,0.28); border-radius: 18px; padding: 1.3rem; box-shadow: 0 18px 38px rgba(3,10,28,0.55); position: sticky; top: 6.5rem; }
+        .nxq-chat-messages { max-height: 420px; overflow-y: auto; margin-bottom: 1rem; padding-right: 8px; }
+        .nxq-chat-bubble { margin-bottom: 0.8rem; padding: 0.75rem 1rem; border-radius: 14px; line-height: 1.45; font-size: 0.95rem; }
+        .nxq-chat-bubble.ai { background: rgba(59,130,246,0.12); border: 1px solid rgba(59,130,246,0.25); }
+        .nxq-chat-bubble.user { background: rgba(56,178,172,0.18); border: 1px solid rgba(56,178,172,0.32); }
+        .nxq-toast { position: fixed; right: 28px; bottom: 28px; background: rgba(30,41,59,0.95); border: 1px solid rgba(248,113,113,0.4); border-radius: 14px; padding: 0.9rem 1.1rem; display: flex; align-items: center; gap: 10px; box-shadow: 0 15px 30px rgba(3,10,28,0.45); z-index: 99; }
+        .nxq-logs-overlay { position: fixed; top: 80px; right: 48px; width: min(420px, 92vw); max-height: 72vh; overflow-y: auto; background: rgba(11,18,32,0.96); border: 1px solid rgba(120,160,210,0.35); border-radius: 16px; padding: 1.4rem; box-shadow: 0 24px 45px rgba(2,8,22,0.6); z-index: 120; }
+        .nxq-logs-entry { border-left: 3px solid rgba(59,130,246,0.45); padding: 0.55rem 0.8rem; margin-bottom: 0.6rem; background: rgba(16,24,40,0.85); }
+        .nxq-logs-entry small { color: rgba(198,212,238,0.65); display: block; margin-bottom: 3px; }
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
 
-
-def _prepare_report_choices() -> List[Tuple[str, Dict[str, Any]]]:
-    choices: List[Tuple[str, Dict[str, Any]]] = []
-    results = st.session_state.get("analysis_results", [])
-    for result_index, result in enumerate(results, start=1):
-        for report_index, report in enumerate(result.get("reports") or [], start=1):
-            title = report.get("title") or result.get("source") or f"Documento {report_index}"
-            label = f"{result_index}.{report_index} - {title}"
-            choices.append((label, report))
-    return choices
-
-
-def _trigger_export(format_id: str, dataset: Dict[str, Any]) -> None:
-    try:
-        if format_id == "MD":
-            data, mime, filename = _build_markdown_export(dataset)
-        else:
-            endpoint, mime, default_name = EXPORT_ENDPOINTS.get(format_id, (None, None, None))
-            if not endpoint:
-                st.toast(f"Formato de exportacao desconhecido: {format_id}")
-                return
-            response = requests.post(
-                f"{API_BASE_URL}/export/{endpoint}",
-                json={"dataset": dataset},
-                timeout=120,
-            )
-            response.raise_for_status()
-            data = response.content
-            stem = _slugify(dataset.get("title") or "relatorio")
-            extension = default_name.split(".")[-1]
-            filename = f"{stem}.{extension}"
-        st.session_state["last_export"] = {
-            "format": format_id,
-            "data": data,
-            "mime": mime,
-            "name": filename,
-        }
-        st.toast(f"Exportacao {format_id} pronta para download.")
-    except requests.RequestException as exc:
-        st.toast(f"Falha na exportacao {format_id}: {exc}")
+def _enqueue_files(files: Iterable["UploadedFile"]) -> Tuple[int, List[str]]:
+    added = 0
+    duplicates: List[str] = []
+    names = {entry["name"] for entry in st.session_state["upload_queue"]}
+    for file in files:
+        if file.name in names:
+            duplicates.append(file.name)
+            continue
+        payload = _prepare_payload(file)
+        st.session_state["upload_queue"].append({"name": file.name, "size": getattr(file, "size", 0), "payload": payload})
+        names.add(file.name)
+        added += 1
+    return added, duplicates
 
 
-def _agent_card_html(agent: str, status: str) -> str:
-    icon_map = {"pending": "...", "running": ">>", "completed": "ok", "error": "!!"}
-    label_map = {
-        "pending": "Pendente",
-        "running": "Processando",
-        "completed": "Concluido",
-        "error": "Erro",
+def _clear_upload_queue() -> None:
+    st.session_state["upload_queue"] = []
+
+
+def _update_agent_status(status: str) -> None:
+    for key, _ in AGENT_STEPS:
+        st.session_state["agent_status"][key] = status
+
+
+def _aggregate_local(results: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+    totals = {"vNF": 0.0, "vProd": 0.0, "vICMS": 0.0, "vPIS": 0.0, "vCOFINS": 0.0}
+    docs: List[Dict[str, Any]] = []
+    for result in results:
+        for report in result.get("reports", []):
+            source = report.get("source") or {}
+            itens = source.get("itens") or []
+            valor_produtos = sum(float(item.get("valor") or 0) for item in itens)
+            resumo = (report.get("taxes") or {}).get("resumo") or {}
+            totals["vProd"] += valor_produtos
+            totals["vNF"] += valor_produtos
+            totals["vICMS"] += float(resumo.get("totalICMS") or 0)
+            totals["vPIS"] += float(resumo.get("totalPIS") or 0)
+            totals["vCOFINS"] += float(resumo.get("totalCOFINS") or 0)
+            docs.append({"Documento": report.get("title"), "Valor dos Produtos": valor_produtos, "Score": (report.get("compliance") or {}).get("score")})
+    return {"totals": totals, "docs": docs}
+
+
+def _process_queue() -> None:
+    if not st.session_state["upload_queue"]:
+        _set_toast("Nenhum arquivo na fila.")
+        return
+    st.session_state["pipelineStep"] = "PROCESSING"
+    st.session_state["processing_status"] = "Iniciando pipeline"
+    _update_agent_status("pending")
+    st.session_state.pop("_processing_started", None)
+    st.experimental_rerun()
+
+
+def _run_pipeline() -> None:
+    queue = list(st.session_state.get("upload_queue") or [])
+    if not queue:
+        st.session_state["pipelineStep"] = "UPLOAD"
+        st.experimental_rerun()
+        return
+    results: List[Dict[str, Any]] = []
+    logs: List[Dict[str, Any]] = []
+    errors: List[str] = []
+    for index, entry in enumerate(queue, start=1):
+        name = entry["name"]
+        payload = entry["payload"]
+        st.session_state["processing_status"] = f"Processando {index}/{len(queue)}: {name}"
+        for step_id, _ in AGENT_STEPS:
+            st.session_state["agent_status"][step_id] = "running"
+        st.experimental_rerun()
+        try:
+            raw_result = process_uploaded_file(payload)
+            results.append(raw_result)
+            logs.extend(raw_result.get("logs") or [])
+            for step_id, _ in AGENT_STEPS:
+                st.session_state["agent_status"][step_id] = "completed"
+        except Exception as exc:
+            errors.append(f"{name}: {exc}")
+            for step_id, _ in AGENT_STEPS:
+                st.session_state["agent_status"][step_id] = "error"
+    st.session_state["analysis_results"] = results
+    st.session_state["logs_payload"] = logs
+    aggregated = _aggregate_local(results)
+    st.session_state["aggregated_overview"] = {
+        "reports": [r for result in results for r in result.get("reports", [])],
+        "docs": aggregated.get("docs", []),
+        "totals": aggregated.get("totals", {}),
+        "logs": logs,
     }
-    status_class = status if status in {"running", "completed", "error"} else "pending"
-    icon = icon_map.get(status, "...")
-    label = label_map.get(status, status.title())
-    return (
-        f"<div class='nxq-agent-card'><strong>{agent}</strong>"
-        f"<span class='nxq-agent-status {status_class}'>{icon} {label}</span></div>"
-    )
+    st.session_state["aggregated_totals"] = aggregated.get("totals", {})
+    st.session_state["aggregated_docs"] = aggregated.get("docs", [])
+    st.session_state["upload_queue"] = []
+    if errors:
+        st.session_state["pipelineStep"] = "ERROR"
+        st.session_state["processing_status"] = "\n".join(errors)
+    else:
+        st.session_state["pipelineStep"] = "COMPLETE"
+        st.session_state["analysis_history"].append(aggregated)
+    st.experimental_rerun()
 
 
-
-def _render_header() -> None:
-    pipeline_step = st.session_state.get("pipelineStep", "UPLOAD")
-    current_view = st.session_state.get("activeView", "report")
-    report_choices = _prepare_report_choices()
-
-    brand_html = """<div class='nxq-brand'>
-    <div class='nxq-brand-logo'>
-        <svg viewBox=\"0 0 36 36\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">
-            <defs>
-                <linearGradient id=\"nxq-logo-gradient\" x1=\"4\" y1=\"4\" x2=\"32\" y2=\"32\" gradientUnits=\"userSpaceOnUse\">
-                    <stop stop-color=\"#60a5fa\"/>
-                    <stop offset=\"1\" stop-color=\"#38bdf8\"/>
-                </linearGradient>
-            </defs>
-            <path d=\"M8 28V8L18 18L28 8V28\" stroke=\"url(#nxq-logo-gradient)\" stroke-width=\"3.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>
-            <path d=\"M8 28L18 18L28 28\" stroke=\"url(#nxq-logo-gradient)\" stroke-width=\"3.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" opacity=\"0.6\"/>
-        </svg>
-    </div>
-    <div class='nxq-brand-text'>
-        <h1 class='nxq-brand-name'>Nexus <span>QuantumI2A2</span></h1>
-        <p class='nxq-brand-tagline'>Interactive Insight &amp; Intelligence from Fiscal Analysis</p>
-    </div>
-</div>"""
-
+def render_header() -> None:
+    show_exports = st.session_state["pipelineStep"] == "COMPLETE" and bool(st.session_state.get("aggregated_overview"))
     st.markdown("<div class='nxq-header'>", unsafe_allow_html=True)
-    header_cols = st.columns([6, 1], gap="large")
-    with header_cols[0]:
-        st.markdown(brand_html, unsafe_allow_html=True)
-    with header_cols[1]:
-        st.markdown("<div class='nxq-header-action'>", unsafe_allow_html=True)
-        if st.button(" ", key="toggle_logs"):
-            st.session_state["show_logs_panel"] = not st.session_state.get("show_logs_panel")
-            st.experimental_rerun()
+    brand_html = """
+        <div class='nxq-brand'>
+            <div class='nxq-brand-logo'>
+                <svg viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <defs>
+                        <linearGradient id="nxq-logo-gradient" x1="4" y1="4" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+                            <stop stop-color="#60a5fa"/>
+                            <stop offset="1" stop-color="#38bdf8"/>
+                        </linearGradient>
+                    </defs>
+                    <path d="M8 28V8L18 18L28 8V28" stroke="url(#nxq-logo-gradient)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M8 28L18 18L28 28" stroke="url(#nxq-logo-gradient)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
+                </svg>
+            </div>
+            <div>
+                <h1 class='nxq-brand-title'>Nexus QuantumI2A2</h1>
+                <p class='nxq-brand-subtitle'>Interactive Insight & Intelligence from Fiscal Analysis</p>
+            </div>
+        </div>
+    """
+    st.markdown(brand_html, unsafe_allow_html=True)
+    actions = st.container()
+    with actions:
+        st.markdown("<div class='nxq-header-actions'>", unsafe_allow_html=True)
+        if show_exports:
+            reports = st.session_state.get("aggregated_overview", {}).get("reports") or []
+            if reports:
+                col_select, col_buttons = st.columns([2, 3], gap="small")
+                labels = [r.get("title") or f"Documento {i+1}" for i, r in enumerate(reports)]
+                with col_select:
+                    selection = st.selectbox(
+                        "Documento para exportar",
+                        labels,
+                        index=min(st.session_state.get("selected_export_index", 0), len(labels) - 1),
+                        label_visibility="hidden",
+                        key="export-selector",
+                    )
+                    st.session_state["selected_export_index"] = labels.index(selection)
+                with col_buttons:
+                    st.markdown("<div class='nxq-export-group'>", unsafe_allow_html=True)
+                    dataset = reports[st.session_state["selected_export_index"]]
+                    cols = st.columns(4)
+                    for fmt, col in zip(["pdf", "docx", "html", "md"], cols):
+                        with col:
+                            if st.button(fmt.upper(), key=f"export-{fmt}"):
+                                _trigger_export(fmt, dataset)
+                    st.markdown("</div>", unsafe_allow_html=True)
+                    if st.button("SPED", key="export-sped"):
+                        _trigger_export("sped", dataset)
+        if st.button("Logs", key="toggle-logs"):
+            st.session_state["showLogs"] = not st.session_state.get("showLogs")
         st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    if pipeline_step == "COMPLETE" and current_view == "report" and report_choices:
-        st.markdown("<div class='nxq-header-exports'>", unsafe_allow_html=True)
-        selector_col, actions_col = st.columns([2, 3], gap="large")
-        labels = [label for label, _ in report_choices]
-        default_index = min(st.session_state.get("selected_report_index", 0), len(labels) - 1)
-        with selector_col:
-            selection = st.selectbox(
-                "Documento para exportar",
-                labels,
-                index=default_index,
-                label_visibility="collapsed",
-            )
-        selected_index = labels.index(selection)
-        st.session_state["selected_report_index"] = selected_index
-        dataset = report_choices[selected_index][1]
-        with actions_col:
-            st.markdown("<div class='nxq-export-grid'>", unsafe_allow_html=True)
-            export_labels = ["PDF", "DOCX", "HTML", "MD", "SPED"]
-            export_cols = st.columns(len(export_labels))
-            for idx, label in enumerate(export_labels):
-                if export_cols[idx].button(label, key=f"export_{label.lower()}"):
-                    _trigger_export(label, dataset)
-            st.markdown("</div>", unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
 
-def _render_pending_export() -> None:
-    payload = st.session_state.get("last_export")
-    if not payload:
+def render_toast() -> None:
+    toast = st.session_state.get("toast")
+    if not toast:
         return
-    st.success(f"Exportacao {payload['format']} pronta para download.")
-    st.download_button(
-        label=f"Baixar {payload['format']}",
-        data=payload["data"],
-        mime=payload["mime"],
-        file_name=payload["name"],
-        key=f"download_{payload['format'].lower()}",
-    )
+    message = toast.get("message")
+    if not message:
+        return
+    icon = "⚠️" if toast.get("level") == "error" else "ℹ️"
+    html_block = f"<div class='nxq-toast'><span>{icon}</span><span>{html.escape(message)}</span></div>"
+    st.markdown(html_block, unsafe_allow_html=True)
+    st.session_state["toast"] = None
 
 
 def render_logs_overlay() -> None:
-    if not st.session_state.get("show_logs_panel"):
+    if not st.session_state.get("showLogs"):
         return
-
-    logs = (st.session_state.get("aggregated_overview") or {}).get("logs") or []
-    with st.container():
-        st.markdown("<div class='nxq-modal'>", unsafe_allow_html=True)
-        st.markdown("<h4>Logs do pipeline</h4>", unsafe_allow_html=True)
-        if not logs:
-            st.info("Nenhum log disponivel no momento.")
-        else:
-            for entry in logs[-100:]:
-                level = entry.get("level") or entry.get("levelname") or "INFO"
-                message = entry.get("message") or entry.get("msg") or ""
-                timestamp = entry.get("timestamp") or entry.get("time") or ""
-                st.markdown(
-                    f"<div class='nxq-log-item'><strong>{html.escape(str(level))}</strong>"
-                    f"<small>{html.escape(str(timestamp))}</small>"
-                    f"<div>{html.escape(str(message))}</div></div>",
-                    unsafe_allow_html=True,
-                )
-        json_payload = json.dumps(logs, indent=2, ensure_ascii=False)
-        text_payload = "\n".join(
-            f"[{entry.get('timestamp') or entry.get('time')}] "
-            f"{entry.get('level') or entry.get('levelname')}: {entry.get('message') or entry.get('msg') or ''}"
-            for entry in logs
-        )
-        st.download_button(
-            "Exportar JSON",
-            data=json_payload.encode("utf-8"),
-            mime="application/json",
-            file_name="logs_pipeline.json",
-            key="download_logs_json",
-            use_container_width=True,
-        )
-        st.download_button(
-            "Exportar TXT",
-            data=text_payload.encode("utf-8"),
-            mime="text/plain",
-            file_name="logs_pipeline.txt",
-            key="download_logs_txt",
-            use_container_width=True,
-        )
-        if st.button("Fechar painel", key="close_logs_panel", use_container_width=True):
-            st.session_state["show_logs_panel"] = False
-            st.experimental_rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
-
-
-def _request_interdoc_comparison() -> None:
-    docs_for_compare = _prepare_docs_for_comparison(st.session_state.get("analysis_results", []))
-    if not docs_for_compare:
-        st.toast("Nenhum documento disponivel para comparacao.")
-        return
-    try:
-        response = requests.post(
-            f"{API_BASE_URL}/interdoc/compare",
-            json={"docs": docs_for_compare},
-            timeout=120,
-        )
-        response.raise_for_status()
-        data = response.json()
-    except requests.RequestException as exc:
-        st.toast(f"Falha ao comparar documentos: {exc}")
-        st.session_state["comparison_result"] = None
+    logs = st.session_state.get("logs_payload") or []
+    st.markdown("<div class='nxq-logs-overlay'>", unsafe_allow_html=True)
+    st.markdown("### Logs de Execução")
+    if not logs:
+        st.info("Nenhum log disponível.")
     else:
-        st.session_state["comparison_result"] = data.get("result")
-        st.session_state["comparison_signature"] = str(len(docs_for_compare))
-        st.session_state["activeView"] = "comparative"
-        st.experimental_rerun()
+        for entry in logs[-200:]:
+            stamp = entry.get("timestamp") or entry.get("time") or "--"
+            level = entry.get("level") or entry.get("levelname") or "INFO"
+            message = entry.get("message") or entry.get("msg") or ""
+            agent = entry.get("agent") or entry.get("stage") or "pipeline"
+            block = f"""<div class='nxq-logs-entry'><small>[{level}] [{agent}] {stamp}</small><div>{html.escape(str(message))}</div></div>"""
+            st.markdown(block, unsafe_allow_html=True)
+    if st.button("Fechar", key="close-logs"):
+        st.session_state["showLogs"] = False
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def render_upload_view() -> None:
+    render_header()
     st.markdown("<div class='nxq-upload-wrapper'><div class='nxq-upload-card'>", unsafe_allow_html=True)
-    st.markdown("<div class='nxq-step-title'>1. Upload de Arquivos</div>", unsafe_allow_html=True)
+    st.markdown("<div class='nxq-upload-title'>1. Upload de Arquivos</div>", unsafe_allow_html=True)
     files = st.file_uploader(
-        "Clique ou arraste novos arquivos",
-        type=["xml", "csv", "xlsx", "pdf", "png", "jpg", "zip"],
+        "Selecione arquivos",
+        type=["xml", "csv", "xlsx", "pdf", "png", "jpeg", "jpg", "zip"],
         accept_multiple_files=True,
         label_visibility="collapsed",
         key="primary_uploader",
     )
-    st.markdown("<p class='nxq-upload-support'>Suportados: XML, CSV, XLSX, PDF, Imagens (PNG, JPG), ZIP (limite de 200MB)</p>", unsafe_allow_html=True)
-    st.markdown("<div class='nxq-demo-link'>", unsafe_allow_html=True)
-    demo_clicked = st.button(" ", key="nxq_demo_link")
-    st.markdown("</div></div></div>", unsafe_allow_html=True)
-
-    if demo_clicked:
-        st.session_state["demo_loaded"] = True
-        st.toast("Exemplo de demonstracao pronto. Substitua pelos seus documentos reais para obter insights.")
-
     if files:
         added, duplicates = _enqueue_files(files)
         if added:
-            st.toast(f"{added} arquivo(s) adicionado(s) a fila.")
+            _set_toast(f"{added} arquivo(s) adicionados à fila.", level="info")
         if duplicates:
-            st.toast("Arquivos ignorados por ja estarem na fila: " + ", ".join(duplicates))
-
-    queue_meta = st.session_state.get("uploaded_queue_meta", [])
-    payloads_present = bool(st.session_state.get("uploaded_payloads"))
-
-    if queue_meta or payloads_present:
+            _set_toast("Arquivos ignorados: " + ", ".join(duplicates), level="info")
+    st.markdown(
+        "<p class='nxq-hint'>Suportados: XML, CSV, XLSX, PDF, Imagens (PNG, JPG), ZIP (limite de 200 MB)</p>",
+        unsafe_allow_html=True,
+    )
+    st.markdown("</div></div>", unsafe_allow_html=True)
+    st.markdown("<div class='nxq-demo-link'>", unsafe_allow_html=True)
+    if st.button("Use um exemplo de demonstração", key="demo-button"):
+        _set_toast("Modo demonstração indisponível no momento.", level="info")
+    st.markdown("</div>", unsafe_allow_html=True)
+    queue = st.session_state.get("upload_queue") or []
+    if queue:
         st.markdown("<div class='nxq-upload-extras'>", unsafe_allow_html=True)
-        if queue_meta:
-            queue_df = pd.DataFrame(
-                [
-                    {
-                        "Arquivo": item.get("name"),
-                        "Tamanho (KB)": f"{(float(item.get('size', 0)) / 1024):.1f}" if item.get("size") else "-",
-                    }
-                    for item in queue_meta
-                ]
-            )
-            st.markdown("#### Arquivos na fila")
-            st.dataframe(queue_df, use_container_width=True, hide_index=True)
-
+        st.markdown("#### Arquivos na fila")
+        df = pd.DataFrame([{ "Nome do arquivo": item["name"], "Tamanho": _format_file_size(item["size"])} for item in queue])
+        st.dataframe(df, use_container_width=True, hide_index=True)
         st.markdown("<div class='nxq-upload-actions'>", unsafe_allow_html=True)
-        action_cols = st.columns(2, gap="large")
-        with action_cols[0]:
-            if st.button("Iniciar analise", disabled=not payloads_present, use_container_width=True):
-                st.session_state["pipelineStep"] = "PROCESSING"
-                st.session_state["analysis_errors"] = []
-                st.session_state["processing_status"] = ""
-                st.session_state["agent_status"] = {agent: "running" for agent in AGENT_STEPS}
-                st.experimental_rerun()
-        with action_cols[1]:
-            if st.button("Limpar fila", disabled=not queue_meta, use_container_width=True):
-                st.session_state["uploaded_payloads"] = []
-                st.session_state["uploaded_names"] = []
-                st.session_state["uploaded_queue_meta"] = []
-                st.toast("Fila de arquivos limpa.")
+        col1, col2 = st.columns(2, gap="large")
+        with col1:
+            st.button(f"Analisar {len(queue)} arquivo(s)", on_click=_process_queue, use_container_width=True)
+        with col2:
+            st.button("Limpar fila", on_click=_clear_upload_queue, use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
+
 
 def render_processing_view() -> None:
-    st.subheader("Processamento com agentes especialistas")
-    cols = st.columns(len(AGENT_STEPS))
-    placeholders = [col.empty() for col in cols]
-
-    def refresh_agent_cards() -> None:
-        statuses = st.session_state.get("agent_status", {})
-        for placeholder, agent in zip(placeholders, AGENT_STEPS):
-            placeholder.markdown(
-                _agent_card_html(agent, statuses.get(agent, "pending")),
-                unsafe_allow_html=True,
-            )
-
-    refresh_agent_cards()
-
-    payloads = st.session_state.get("uploaded_payloads", [])
-    if not payloads:
-        st.info("Nenhum arquivo na fila. Volte para a etapa de upload.")
-        if st.button("Voltar para upload", use_container_width=True):
-            st.session_state["pipelineStep"] = "UPLOAD"
-            st.experimental_rerun()
-        return
-
-    progress = st.progress(0)
-    results: List[Dict[str, Any]] = []
-    errors: List[str] = []
-
-    for index, payload in enumerate(payloads, start=1):
-        name = payload[0]
-        st.session_state["processing_status"] = f"Processando {index}/{len(payloads)}: {name}"
-        st.write(f"**{st.session_state['processing_status']}**")
-
-        st.session_state["agent_status"] = {agent: "running" for agent in AGENT_STEPS}
-        refresh_agent_cards()
-
-        with st.spinner(st.session_state["processing_status"]):
-            try:
-                raw_result = process_uploaded_file(payload)
-                per_file_summary = aggregate_results([raw_result])
-                totals = per_file_summary.get("totals", {})
-                results.append({**raw_result, "source": name, "totals": totals})
-                st.session_state["agent_status"] = {agent: "completed" for agent in AGENT_STEPS}
-            except Exception as exc:  # pragma: no cover - feedback ao usuario
-                errors.append(name)
-                st.session_state["agent_status"] = {agent: "error" for agent in AGENT_STEPS}
-                st.error(f"Falha ao processar {name}: {exc}")
-        refresh_agent_cards()
-        progress.progress(index / len(payloads))
-
-    progress.empty()
-
-    aggregated = aggregate_results(results) if results else None
-    st.session_state["analysis_results"] = results
-    st.session_state["aggregated_overview"] = aggregated
-    st.session_state["aggregated_totals"] = (aggregated or {}).get("totals", {}) if aggregated else {}
-    st.session_state["aggregated_docs"] = (aggregated or {}).get("docs", []) if aggregated else []
-    st.session_state["analysis_errors"] = errors
-    st.session_state["analysis_completed"] = bool(results)
-    st.session_state["uploaded_payloads"] = []
-    st.session_state["uploaded_names"] = []
-    st.session_state["uploaded_queue_meta"] = []
-    st.session_state["pipelineStep"] = "ERROR" if errors and not results else "COMPLETE"
-    st.experimental_rerun()
+    render_header()
+    status = st.session_state.get("processing_status") or "Aguardando"
+    st.write(f"#### {status}")
+    st.markdown("<div class='nxq-progress-steps'>", unsafe_allow_html=True)
+    for idx, (step_id, label) in enumerate(AGENT_STEPS):
+        step_state = st.session_state["agent_status"].get(step_id, "pending")
+        node = "✓" if step_state == "completed" else str(idx + 1)
+        html_block = f"<div class='nxq-progress-step'><div class='nxq-progress-node {step_state}'>{node}</div><div class='nxq-progress-label'>{label}</div></div>"
+        st.markdown(html_block, unsafe_allow_html=True)
+        if idx < len(AGENT_STEPS) - 1:
+            st.markdown("<div class='nxq-progress-connector'></div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.progress(0.5)
+    if not st.session_state.get("_processing_started"):
+        st.session_state["_processing_started"] = True
+        _run_pipeline()
 
 
-def _render_report_view(aggregated: Dict[str, Any], results: List[Dict[str, Any]]) -> None:
+def _render_report_tab(aggregated: Dict[str, Any]) -> None:
     display_summary(aggregated)
     reports = aggregated.get("reports") or []
-
-    if reports:
-        for idx, report in enumerate(reports, start=1):
-            title = report.get("title") or f"Documento {idx}"
-            with st.expander(f"Detalhes: {title}", expanded=idx == 1):
-                classification = report.get("classification") or {}
-                taxes = report.get("taxes") or {}
-                compliance = report.get("compliance") or {}
-                st.markdown("**Resumo fiscal**")
-                st.json({"classification": classification, "taxes": taxes})
-                if compliance:
-                    st.markdown("**Conformidade**")
-                    st.json(compliance)
-    if results:
-        st.caption("Consulte a aba Dashboard para acompanhar o historico incremental.")
+    if not reports:
+        st.info("Nenhum relatório disponível.")
+        return
+    for idx, report in enumerate(reports, start=1):
+        with st.expander(report.get("title") or f"Documento {idx}", expanded=idx == 1):
+            st.json(report)
 
 
-def _render_dashboard_view(aggregated: Dict[str, Any], results: List[Dict[str, Any]]) -> None:
+def _render_dashboard_tab(aggregated: Dict[str, Any], results: List[Dict[str, Any]]) -> None:
+    display_summary(aggregated)
     docs = aggregated.get("docs") or []
     if docs:
         df = pd.DataFrame(docs)
-        if {"documento", "valor_produtos"}.issubset(df.columns):
-            numeric = df[["documento", "valor_produtos"]].copy()
-            numeric["valor_produtos"] = pd.to_numeric(numeric["valor_produtos"], errors="coerce").fillna(0.0)
-            numeric.set_index("documento", inplace=True)
-            st.markdown("#### Valor por documento")
-            st.bar_chart(numeric)
+        df["Valor dos Produtos"] = df["Valor dos Produtos"].map(_format_brl)
+        st.dataframe(df, use_container_width=True, hide_index=True)
     else:
-        st.info("Inclua documentos para visualizar o painel interativo.")
-
+        st.info("Envie arquivos para gerar métricas.")
     totals = aggregated.get("totals") or {}
     base_icms = float(totals.get("vICMS") or 0.0)
-    slider = st.slider("Ajuste percentual da aliquota de ICMS", 70, 130, 100, step=1)
-    projected = base_icms * slider / 100
-    delta = projected - base_icms
-    st.metric("ICMS projetado", _format_brl(projected), delta=_format_brl(delta))
-
+    col_slider, col_metric = st.columns([2, 1])
+    with col_slider:
+        aliquot = st.slider("Alíquota de ICMS Simulado (%)", 0.0, 30.0, 18.0, 0.5, key="icms-slider")
+    with col_metric:
+        simulated = base_icms * (aliquot / 18.0) if base_icms else 0.0
+        st.metric("ICMS Simulado", _format_brl(simulated), delta=_format_brl(simulated - base_icms))
     show_incremental_insights(results)
 
-    if st.session_state.get("comparison_result"):
-        st.success("Comparacao interdocumental pronta. Consulte a aba Analise Comparativa.")
-    else:
-        st.info("Execute a acao 'Comparar documentos' para ativar discrepancias interdocumentais.")
 
-
-def _render_comparative_view(results: List[Dict[str, Any]]) -> None:
+def _render_comparative_tab(results: List[Dict[str, Any]]) -> None:
     comparison = st.session_state.get("comparison_result")
     if not comparison:
-        st.info("Nenhum resultado de comparacao disponivel. Clique em 'Comparar documentos'.")
+        st.info("Envie ao menos duas análises para comparação.")
         return
-
     render_discrepancies_panel(comparison)
-
-    totals_rows = []
-    for index, result in enumerate(results, start=1):
-        totals = result.get("totals") or {}
-        totals_rows.append(
-            {
-                "Execucao": f"Execucao {index}",
-                "Valor total": float(totals.get("vNF") or 0.0),
-            }
-        )
-    if totals_rows:
-        chart_df = pd.DataFrame(totals_rows).set_index("Execucao")
-        st.markdown("#### Evolucao do valor total por execucao")
-        st.bar_chart(chart_df)
-
     show_incremental_insights(results)
 
 
-def render_results_view() -> None:
-    aggregated = st.session_state.get("aggregated_overview")
-    results = st.session_state.get("analysis_results", [])
-
-    if not aggregated:
-        st.info("Nenhum resultado disponivel. Adicione arquivos e execute o processamento.")
-        if st.button("Voltar para upload", use_container_width=True):
-            st.session_state["pipelineStep"] = "UPLOAD"
-            st.experimental_rerun()
-        return
-
-    view_options = [("report", "Relatorio de Analise"), ("dashboard", "Dashboard")]
-    if len(results) > 1 or st.session_state.get("comparison_result"):
-        view_options.append(("comparative", "Analise Comparativa"))
-
-    labels = [label for _, label in view_options]
-    current_view = st.session_state.get("activeView", "report")
-    default_index = next((i for i, (value, _) in enumerate(view_options) if value == current_view), 0)
-
-    with st.container():
-        st.markdown("<div class='nxq-view-tabs'>", unsafe_allow_html=True)
-        selected_label = st.radio(
-            "Selecionar visualizacao",
-            labels,
-            index=default_index,
-            horizontal=True,
-            key="view_selector",
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
-    selected_view = next(value for value, label in view_options if label == selected_label)
-    st.session_state["activeView"] = selected_view
-
+def render_complete_view() -> None:
+    render_header()
+    aggregated = st.session_state.get("aggregated_overview") or {}
+    results = st.session_state.get("analysis_results") or []
+    st.markdown("<div class='nxq-view-switcher'>", unsafe_allow_html=True)
+    options = [("report", "Relatório de Análise"), ("dashboard", "Dashboard")]
+    if len(st.session_state.get("analysis_history", [])) > 1:
+        options.append(("comparative", "Análise Comparativa"))
+    labels = [label for _, label in options]
+    values = [value for value, _ in options]
+    selected = st.radio(
+        "Visualização",
+        labels,
+        index=values.index(st.session_state.get("activeView", "report")),
+        horizontal=True,
+        label_visibility="hidden",
+        key="view-switcher-radio",
+    )
+    st.session_state["activeView"] = values[labels.index(selected)]
+    st.markdown("</div>", unsafe_allow_html=True)
     main_col, chat_col = st.columns([2, 1], gap="large")
     with main_col:
-        if selected_view == "report":
-            _render_report_view(aggregated, results)
-        elif selected_view == "dashboard":
-            _render_dashboard_view(aggregated, results)
-        elif selected_view == "comparative":
-            _render_comparative_view(results)
-
+        view = st.session_state["activeView"]
+        if view == "report":
+            _render_report_tab(aggregated)
+        elif view == "dashboard":
+            _render_dashboard_tab(aggregated, results)
+        elif view == "comparative":
+            _render_comparative_tab(results)
     with chat_col:
         render_chat_panel()
 
-    st.markdown("---")
-    action_cols = st.columns([1, 1, 1])
-    if action_cols[0].button("Adicionar novos arquivos", use_container_width=True):
-        st.session_state["pipelineStep"] = "UPLOAD"
-        st.experimental_rerun()
-    if action_cols[1].button("Comparar documentos", use_container_width=True):
-        _request_interdoc_comparison()
-    if action_cols[2].button("Iniciar nova analise", use_container_width=True):
-        _reset_app_state()
-        st.experimental_rerun()
 
-    errors = st.session_state.get("analysis_errors", [])
-    if errors:
-        st.warning(f"{len(errors)} arquivo(s) nao foram processados: {', '.join(errors)}")
+def render_error_view() -> None:
+    render_header()
+    st.error("Falha na análise")
+    st.write(st.session_state.get("processing_status") or "O pipeline encontrou uma falha.")
+    if st.button("Tentar Novamente"):
+        st.session_state["pipelineStep"] = "UPLOAD"
+        _clear_analysis_state()
+        st.experimental_rerun()
 
 
 def render_chat_panel() -> None:
-    chat_container = st.container()
-    chat_container.markdown("<div class='chat-panel nxq-sticky-chat'>", unsafe_allow_html=True)
-    chat_container.markdown("<h4>Chat fiscal</h4>", unsafe_allow_html=True)
-    chat_container.markdown(
-        _render_chat_history(st.session_state.get("chat_messages", [])),
-        unsafe_allow_html=True,
-    )
-    chat_container.caption("Pergunte em linguagem natural ou anexe novos documentos durante a analise.")
-
-    with chat_container.form("chat_form", clear_on_submit=True):
-        prompt = st.text_area(
-            "Mensagem",
-            key="chat_prompt",
-            placeholder="Pergunte sobre valores, impostos ou discrepancias...",
-            height=120,
-        )
-        chat_files = st.file_uploader(
-            "Adicionar anexos",
-            type=["xml", "csv", "xlsx", "pdf", "jpg", "png", "zip"],
-            accept_multiple_files=True,
-            key="chat_file_uploader",
-        )
-        submitted = st.form_submit_button("Enviar", use_container_width=True)
-
-    if submitted:
-        attachments = chat_files or []
+    st.markdown("<div class='nxq-chat-panel'>", unsafe_allow_html=True)
+    st.markdown("### 3. Chat Interativo")
+    messages = st.session_state.get("chat_messages", [])
+    st.markdown("<div class='nxq-chat-messages'>", unsafe_allow_html=True)
+    for message in messages:
+        bubble_class = "ai" if message.get("sender") != "user" else "user"
+        safe_text = html.escape(message.get("text", "")).replace("\n", "<br>")
+        st.markdown(f"<div class='nxq-chat-bubble {bubble_class}'>{safe_text}</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+    with st.form("chat-form", clear_on_submit=True):
+        cols = st.columns([1, 6, 1, 1])
+        with cols[0]:
+            attachments = st.file_uploader(
+                "Adicionar anexos",
+                type=["xml", "csv", "xlsx", "pdf", "png", "jpeg", "jpg", "zip"],
+                accept_multiple_files=True,
+                label_visibility="collapsed",
+                key="chat-uploader",
+            )
+        with cols[1]:
+            prompt = st.text_input("", placeholder="Faça uma pergunta ou adicione arquivos…")
+        with cols[2]:
+            send = st.form_submit_button("Enviar", use_container_width=True)
+        with cols[3]:
+            st.form_submit_button("Parar", disabled=not st.session_state.get("chat_streaming"))
+    if attachments:
         added, duplicates = _enqueue_files(attachments)
-        text = (prompt or "").strip()
-        if text:
-            st.session_state["chat_messages"].append({"role": "user", "content": text})
-            st.session_state["chat_messages"].append({"role": "assistant", "content": _build_chat_reply(text)})
         if added:
-            st.toast(f"{added} anexo(s) adicionado(s) para a proxima execucao.")
+            _set_toast(f"{added} arquivo(s) adicionados à fila. Volte ao upload para reprocessar.", level="info")
         if duplicates:
-            st.toast("Arquivos ignorados por ja estarem na fila: " + ", ".join(duplicates))
-        if not attachments and not text:
-            st.toast("Nenhuma mensagem ou arquivo foi enviado.")
-        st.session_state["chat_streaming"] = False
-
-    chat_export = json.dumps(st.session_state.get("chat_messages", []), indent=2, ensure_ascii=False)
-    chat_container.download_button(
-        "Exportar conversa (JSON)",
-        data=chat_export.encode("utf-8"),
-        file_name="conversa_nexus.json",
-        mime="application/json",
-        use_container_width=True,
-        key="download_chat_history",
-    )
-    if chat_container.button("Interromper geracao", key="stop_generation", use_container_width=True):
-        st.session_state["chat_streaming"] = False
-        st.toast("Geracao interrompida.")
-    if chat_container.button("Limpar conversa", key="clear_chat", use_container_width=True):
-        st.session_state["chat_messages"] = [dict(INITIAL_CHAT_MESSAGE)]
-        st.toast("Conversa reiniciada.")
+            _set_toast("Arquivos ignorados: " + ", ".join(duplicates), level="info")
+    if send and prompt.strip():
+        st.session_state["chat_messages"].append({"id": f"user-{len(messages)}", "sender": "user", "text": prompt})
+        st.session_state["chat_messages"].append({"id": f"ai-{len(messages)+1}", "sender": "ai", "text": "Esta é uma resposta estática de exemplo. Integre a IA para respostas dinâmicas."})
         st.experimental_rerun()
-    chat_container.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
-def render_error_view() -> None:
-    st.subheader("Falha no pipeline")
-    message = st.session_state.get("processing_status") or "O pipeline interrompeu a execucao."
-    st.error(message)
-    errors = st.session_state.get("analysis_errors", [])
-    if errors:
-        st.write("Arquivos com erro: " + ", ".join(errors))
+def display_summary(aggregated: Dict[str, Any]) -> None:
+    totals = aggregated.get("totals", {})
+    docs = aggregated.get("docs", [])
+    metrics = [
+        ("Documentos", f"{len(docs)}"),
+        ("Valor Total dos Produtos", _format_brl(totals.get("vProd", 0.0))),
+        ("ICMS Estimado", _format_brl(totals.get("vICMS", 0.0))),
+    ]
+    cols = st.columns(len(metrics))
+    for col, (label, value) in zip(cols, metrics):
+        col.metric(label, value)
 
-    control_cols = st.columns([1, 1])
-    if control_cols[0].button("Tentar novamente", use_container_width=True):
-        st.session_state["pipelineStep"] = "UPLOAD"
-        st.experimental_rerun()
-    if control_cols[1].button("Reiniciar aplicacao", use_container_width=True):
-        _reset_app_state()
-        st.experimental_rerun()
+
+def render_toast_and_logs() -> None:
+    render_toast()
+    render_logs_overlay()
 
 
 def main() -> None:
+    _init_session_state()
     _inject_theme()
-    _ensure_state_defaults()
-    _render_header()
-    _render_pending_export()
-    render_logs_overlay()
-
-    pipeline_step = st.session_state.get("pipelineStep", "UPLOAD")
-
-    if pipeline_step == "UPLOAD":
+    render_toast_and_logs()
+    step = st.session_state.get("pipelineStep", "UPLOAD")
+    if step == "UPLOAD":
         render_upload_view()
-    elif pipeline_step == "PROCESSING":
+    elif step == "PROCESSING":
         render_processing_view()
-    elif pipeline_step == "COMPLETE":
-        render_results_view()
-    elif pipeline_step == "ERROR":
+    elif step == "COMPLETE":
+        render_complete_view()
+    elif step == "ERROR":
         render_error_view()
     else:
         st.session_state["pipelineStep"] = "UPLOAD"
