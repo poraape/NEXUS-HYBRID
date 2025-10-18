@@ -3,6 +3,7 @@
 import html
 import json
 from pathlib import Path
+from string import Template
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
