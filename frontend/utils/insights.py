@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Optional
 
 import pandas as pd
 import streamlit as st
@@ -60,3 +60,34 @@ def show_incremental_insights(results: Iterable[Dict[str, Any]]) -> None:
         menor = df.loc[df["Total NF"].idxmin()]
         st.markdown(f"📈 **Maior valor:** {maior['Arquivo']} ({_format_currency(maior['Total NF'])})")
         st.markdown(f"📉 **Menor valor:** {menor['Arquivo']} ({_format_currency(menor['Total NF'])})")
+
+
+def render_discrepancies_panel(compare_result: Optional[Dict[str, Any]]) -> None:
+    """Render a panel with inter-document discrepancies."""
+    st.subheader("🧭 Painel de Discrepâncias Interdocumentais")
+
+    if not compare_result:
+        st.info("Nenhum resultado de comparação disponível ainda.")
+        return
+
+    discrepancies = compare_result.get("discrepancies") or []
+    insights = compare_result.get("insights") or []
+    summary = compare_result.get("summary") or {}
+
+    with st.expander("Resumo (contagens por CFOP, NCM, CST)", expanded=True):
+        st.json(summary)
+
+    if insights:
+        st.markdown("**Insights automáticos**:")
+        for tip in insights:
+            st.markdown(f"- {tip}")
+
+    if discrepancies:
+        st.markdown("**Discrepâncias detectadas (A vs B):**")
+        for item in discrepancies[:200]:
+            a_src = item.get("a_source") or "Documento A"
+            b_src = item.get("b_source") or "Documento B"
+            st.markdown(f"- **{a_src}** ↔ **{b_src}**")
+            st.json(item.get("diffs") or {})
+    else:
+        st.success("Sem discrepâncias materiais entre os documentos processados.")

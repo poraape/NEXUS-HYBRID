@@ -2,15 +2,16 @@ import io
 import mimetypes
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import Body, FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from core.settings import settings
 from core.logger import log_event
 from services.parsers import parse_any_files_from_zip, parse_file
 from utils.aggregator import merge_results
+from utils.fiscal_compare import compare_docs
 from agents.manager import process_documents_pipeline
 from services.export_docx import build_docx
 from services.export_pdf import build_pdf
@@ -120,6 +121,13 @@ async def compare_incremental(payload: Dict[str, Dict[str, Dict[str, float]]]):
     }
 
     return JSONResponse(content={"differences": differences})
+
+
+@app.post("/interdoc/compare")
+async def interdoc_compare(payload: Dict[str, Any] = Body(...)):
+    docs = (payload or {}).get("docs") or []
+    result = compare_docs(docs)
+    return JSONResponse(content={"status": "ok", "result": result})
 
 
 @app.post("/export/docx")

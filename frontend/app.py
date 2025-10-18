@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import json
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Tuple
 
 import pandas as pd
@@ -12,7 +13,7 @@ if TYPE_CHECKING:  # pragma: no cover - hints only
 
 from components.navbar import render_navbar
 from utils.theme_toggle import render_theme_toggle
-from utils.insights import show_incremental_insights
+from utils.insights import render_discrepancies_panel, show_incremental_insights
 
 
 API_BASE_URL = st.secrets.get("API_BASE_URL", "http://backend:8000")
@@ -88,6 +89,65 @@ def _enqueue_files(files: Iterable["UploadedFile"]) -> Tuple[int, List[str]]:
         else:
             duplicates.append(file.name)
     return added, duplicates
+
+
+def _first_non_empty(itens: Iterable[Dict[str, Any]], keys: Iterable[str]) -> str:
+    for item in itens:
+        for key in keys:
+            value = item.get(key)
+            if value:
+                return str(value)
+    return ""
+
+
+def _prepare_docs_for_comparison(results: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    docs: List[Dict[str, Any]] = []
+    for result in results:
+        reports = result.get("reports") or []
+        file_source = result.get("source")
+        for report in reports:
+            source_snapshot = report.get("source") or {}
+            itens = source_snapshot.get("itens") or []
+            totals = report.get("taxes") or {}
+            resumo = totals.get("resumo") or {}
+            classification = report.get("classification") or {}
+
+            valor_produtos = 0.0
+            for item in itens:
+                try:
+                    valor_produtos += float(item.get("valor") or 0.0)
+                except (TypeError, ValueError):
+                    continue
+
+            icms_total = float(resumo.get("totalICMS") or 0.0)
+            pis_total = float(resumo.get("totalPIS") or 0.0)
+            cofins_total = float(resumo.get("totalCOFINS") or 0.0)
+
+            aliquota_icms = icms_total / valor_produtos if valor_produtos else 0.0
+            aliquota_pis = pis_total / valor_produtos if valor_produtos else 0.0
+            aliquota_cofins = cofins_total / valor_produtos if valor_produtos else 0.0
+
+            doc_entry = {
+                "source": file_source or report.get("title"),
+                "emitente": classification.get("emitente")
+                or (source_snapshot.get("emitente") or {}).get("nome"),
+                "cfop": classification.get("cfop")
+                or _first_non_empty(itens, ["cfop"]),
+                "cst": _first_non_empty(itens, ["cst", "cst_icms", "cstIcms"]),
+                "ncm": classification.get("ncm")
+                or _first_non_empty(itens, ["ncm"]),
+                "regime": totals.get("regime"),
+                "aliquota_icms": aliquota_icms,
+                "aliquota_pis": aliquota_pis,
+                "aliquota_cofins": aliquota_cofins,
+                "vNF": valor_produtos,
+                "vProd": valor_produtos,
+                "vICMS": icms_total,
+                "vPIS": pis_total,
+                "vCOFINS": cofins_total,
+            }
+            docs.append(doc_entry)
+    return docs
 
 
 def _render_chat_history(messages: Iterable[Dict[str, str]]) -> str:
@@ -189,6 +249,10 @@ if "chat_messages" not in st.session_state:
     ]
 if "chat_feedback" not in st.session_state:
     st.session_state["chat_feedback"] = None
+if "comparison_result" not in st.session_state:
+    st.session_state["comparison_result"] = None
+if "comparison_signature" not in st.session_state:
+    st.session_state["comparison_signature"] = ""
 st.markdown('<h2 style="color:#00aaff;font-weight:600;">💠 Nexus QuantumI2A2</h2><p style="color:#94a3b8;">Interactive Insight & Intelligence from Fiscal Analysis</p>', unsafe_allow_html=True)
 st.markdown('<div class="fade-in"><h4 style="color:#94a3b8;">Bem-vindo ao Nexus QuantumI2A2 Hybrid.</h4><p style="color:#64748b;">Aguarde enquanto os módulos são inicializados...</p></div>', unsafe_allow_html=True)
 st.divider()
@@ -252,6 +316,8 @@ with col1:
                 st.session_state['aggregated_overview'] = None
 
             st.session_state['analysis_completed'] = bool(results)
+            st.session_state['comparison_result'] = None
+            st.session_state['comparison_signature'] = ""
 with col2:
     chat_container = st.container()
     chat_container.markdown(
@@ -312,6 +378,34 @@ if aggregated_overview:
     show_incremental_insights(analysis_results)
 elif analysis_results:
     show_incremental_insights(analysis_results)
+
+comparison_payload = _prepare_docs_for_comparison(analysis_results)
+if comparison_payload:
+    signature = json.dumps(comparison_payload, sort_keys=True, default=str)
+    if signature != st.session_state.get("comparison_signature"):
+        try:
+            response = requests.post(
+                f"{API_BASE_URL}/interdoc/compare",
+                json={"docs": comparison_payload},
+                timeout=60,
+            )
+            if response.ok:
+                try:
+                    data = response.json()
+                except ValueError:
+                    st.session_state["comparison_result"] = None
+                else:
+                    st.session_state["comparison_result"] = data.get("result")
+            else:
+                st.session_state["comparison_result"] = None
+        except requests.RequestException:
+            st.session_state["comparison_result"] = None
+        st.session_state["comparison_signature"] = signature
+    render_discrepancies_panel(st.session_state.get("comparison_result"))
+else:
+    st.session_state["comparison_result"] = None
+    st.session_state["comparison_signature"] = ""
+    render_discrepancies_panel(None)
 
 errors = st.session_state.get('analysis_errors', [])
 if errors:
