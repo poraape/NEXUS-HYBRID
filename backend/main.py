@@ -2,14 +2,16 @@ import io
 import mimetypes
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import Body, FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from core.settings import settings
 from core.logger import log_event
 from services.parsers import parse_any_files_from_zip, parse_file
+from utils.aggregator import merge_results
+from utils.fiscal_compare import compare_docs
 from agents.manager import process_documents_pipeline
 from services.export_docx import build_docx
 from services.export_pdf import build_pdf
@@ -64,6 +66,69 @@ async def upload_file(file: UploadFile = File(...)):
     doc = parse_file(file.filename, content, mime)
     result = await process_documents_pipeline([doc])
     return JSONResponse(result)
+
+
+@app.post("/upload/multiple")
+async def upload_multiple(files: List[UploadFile] = File(...)):
+    if not files:
+        raise HTTPException(400, "Nenhum arquivo enviado.")
+
+    docs = []
+    for file in files:
+        name = file.filename or "arquivo"
+        content = await file.read()
+        size_mb = len(content) / 1024 / 1024
+        if size_mb > settings.MAX_UPLOAD_MB:
+            raise HTTPException(413, f"{name} excede limite de {settings.MAX_UPLOAD_MB} MB")
+
+        suffix = Path(name).suffix.lower()
+        mime = file.content_type or mimetypes.guess_type(name)[0] or ""
+
+        if suffix == ".zip" or mime in {"application/zip", "application/x-zip-compressed"}:
+            docs.extend(parse_any_files_from_zip(content))
+            continue
+
+        if suffix and suffix not in settings.ALLOWED_EXTENSIONS:
+            raise HTTPException(400, f"Extensão não suportada para {name}.")
+        if mime and not any(mime.startswith(prefix) for prefix in settings.ALLOWED_MIME_PREFIXES):
+            raise HTTPException(400, f"MIME type não autorizado para {name}.")
+
+        doc = parse_file(name, content, mime)
+        if doc.get("kind") == "UNKNOWN":
+            continue
+        docs.append(doc)
+
+    if not docs:
+        raise HTTPException(422, "Nenhum arquivo válido encontrado para processamento.")
+
+    result = await process_documents_pipeline(docs)
+    aggregated = merge_results(result.get("reports", []))
+    return JSONResponse({**result, "aggregated": aggregated})
+
+
+@app.post("/compare-incremental")
+async def compare_incremental(payload: Dict[str, Dict[str, Dict[str, float]]]):
+    previous = (payload or {}).get("previous") or {}
+    current = (payload or {}).get("current") or {}
+
+    previous_totals = previous.get("totals") or {}
+    current_totals = current.get("totals") or {}
+
+    keys = set(current_totals) | set(previous_totals)
+    differences = {
+        key: float(current_totals.get(key) or 0) - float(previous_totals.get(key) or 0)
+        for key in keys
+    }
+
+    return JSONResponse(content={"differences": differences})
+
+
+@app.post("/interdoc/compare")
+async def interdoc_compare(payload: Dict[str, Any] = Body(...)):
+    docs = (payload or {}).get("docs") or []
+    result = compare_docs(docs)
+    return JSONResponse(content={"status": "ok", "result": result})
+
 
 @app.post("/export/docx")
 async def export_docx(payload: ReportRequest):

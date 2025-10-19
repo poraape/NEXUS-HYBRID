@@ -1,0 +1,7 @@
+:root {
+  --color-primary: #00bfff;
+  --bg-gradient: linear-gradient(145deg, #020611 0%, #071a33 100%);
+  --font-main: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+}
+body {background: var(--bg-gradient); color: white; font-family: var(--font-main);}
+button {border-radius: 10px; background: linear-gradient(90deg, #007aff, #00bfff); color:white; border:none; padding:0.5rem 1rem;}
