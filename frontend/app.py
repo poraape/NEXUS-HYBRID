@@ -2,6 +2,7 @@
 
 import html
 import json
+import os
 from pathlib import Path
 from string import Template
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Tuple
@@ -19,7 +20,16 @@ if TYPE_CHECKING:  # pragma: no cover
 from utils.insights import render_discrepancies_panel, show_incremental_insights
 
 
-API_BASE_URL = st.secrets.get("API_BASE_URL", "http://backend:8000")
+def get_config_value(key: str, default: str) -> str:
+    """Fetch configuration from Streamlit secrets with env fallback."""
+    try:
+        value = st.secrets[key]
+    except (FileNotFoundError, KeyError):
+        value = os.getenv(key)
+    return value or default
+
+
+API_BASE_URL = get_config_value("API_BASE_URL", "http://backend:8000")
 
 PRIMARY_COLOR = "#2563eb"
 ACCENT_COLOR = "#38b2ac"
