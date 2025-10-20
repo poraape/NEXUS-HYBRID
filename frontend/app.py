@@ -2,7 +2,9 @@
 
 import html
 import json
+import os
 from pathlib import Path
+from string import Template
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
@@ -18,7 +20,16 @@ if TYPE_CHECKING:  # pragma: no cover
 from utils.insights import render_discrepancies_panel, show_incremental_insights
 
 
-API_BASE_URL = st.secrets.get("API_BASE_URL", "http://backend:8000")
+def get_config_value(key: str, default: str) -> str:
+    """Fetch configuration from Streamlit secrets with env fallback."""
+    try:
+        value = st.secrets[key]
+    except (FileNotFoundError, KeyError):
+        value = os.getenv(key)
+    return value or default
+
+
+API_BASE_URL = get_config_value("API_BASE_URL", "http://backend:8000")
 
 PRIMARY_COLOR = "#2563eb"
 ACCENT_COLOR = "#38b2ac"
@@ -133,6 +144,7 @@ def _init_session_state() -> None:
             st.session_state[key] = value if not isinstance(value, list) else list(value)
 
 
+
 def _inject_theme() -> None:
     st.set_page_config(
         page_title="Nexus QuantumI2A2",
@@ -145,138 +157,152 @@ def _inject_theme() -> None:
     if assets_path.exists():
         st.markdown(f"<style>{assets_path.read_text()}</style>", unsafe_allow_html=True)
 
-    css_template = Template("""
-    <style>
-        header, [data-testid="stSidebar"], [data-testid="collapsedControl"], [data-testid="stToolbar"] {
-            display: none !important;
-        }
-        body {
-            background: $background;
-            color: $text;
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        }
-        [data-testid="stAppViewContainer"] > .main {
-            background: $background;
-        }
-        .block-container {
-            padding: 0 2.4rem 4rem;
-            max-width: 1180px;
-            margin: 0 auto;
-        }
-        .nxq-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 20px 0 18px;
-            margin-bottom: 26px;
-            border-bottom: 1px solid rgba(130, 160, 210, 0.25);
-        }
-        .nxq-brand { display: flex; align-items: center; gap: 18px; }
-        .nxq-brand-logo {
-            width: 56px;
-            height: 56px;
-            border-radius: 16px;
-            border: 1px solid rgba(118, 227, 255, 0.45);
-            background: linear-gradient(140deg, rgba(59, 130, 246, 0.4), rgba(20, 184, 166, 0.4));
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 9px;
-            box-shadow: 0 14px 30px rgba(3, 11, 28, 0.55);
-        }
-        .nxq-brand-logo svg { width: 100%; height: 100%; }
-        .nxq-brand-title {
-            margin: 0;
-            font-size: 1.9rem;
-            font-weight: 700;
-            background: linear-gradient(100deg, #9fdcff 0%, #6ee7d7 70%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-        .nxq-brand-subtitle {
-            margin: 2px 0 0;
-            font-size: 0.95rem;
-            color: rgba(198, 212, 238, 0.8);
-        }
-        .nxq-header-actions { display: flex; align-items: center; gap: 12px; }
-        .nxq-header-actions .stButton button {
-            border-radius: 12px;
-            border: 1px solid rgba(118, 158, 238, 0.35);
-            background: rgba(14, 24, 50, 0.9);
-            color: #d8e6ff;
-            font-weight: 600;
-            padding: 0.4rem 0.9rem;
-        }
-        .nxq-export-group { display: flex; gap: 8px; }
-        .nxq-export-group .stButton button {
-            width: 48px;
-            height: 48px;
-            border-radius: 14px;
-            border: 1px solid rgba(118, 180, 255, 0.35);
-            background: rgba(23, 36, 64, 0.92);
-            color: #cfe4ff;
-            font-weight: 700;
-        }
-        .nxq-upload-wrapper { display: flex; justify-content: center; margin-top: 20px; }
-        .nxq-upload-card {
-            max-width: 640px;
-            width: 100%;
-            background: rgba(13, 22, 38, 0.94);
-            border: 1px solid rgba(118, 160, 210, 0.32);
-            border-radius: 22px;
-            padding: 36px 44px;
-            box-shadow: 0 24px 46px rgba(3, 10, 28, 0.55);
-        }
-        .nxq-upload-title { font-size: 1.12rem; font-weight: 600; margin-bottom: 24px; }
-        .nxq-dropzone {
-            border: 2px dashed rgba(140, 178, 226, 0.45);
-            border-radius: 18px;
-            background: rgba(8, 14, 26, 0.9);
-            padding: 54px 20px 46px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            text-align: center;
-            gap: 10px;
-        }
-        .nxq-dropzone svg { display: none; }
-        .nxq-dropzone::before { content: "\u2191"; font-size: 2.8rem; color: #8ed7ff; }
-        .nxq-dropzone::after { content: "Clique ou arraste novos arquivos"; color: #a9cfff; font-size: 1.05rem; font-weight: 600; }
-        .nxq-hint { margin-top: 16px; text-align: center; font-size: 0.88rem; color: rgba(180, 200, 230, 0.78); }
-        .nxq-demo-link .stButton button { background: none; border: none; color: #7fb6ff; text-decoration: underline; padding: 0; }
-        .nxq-upload-extras {
-            max-width: 640px;
-            margin: 26px auto 0;
-            background: rgba(12, 20, 34, 0.9);
-            border: 1px solid rgba(118, 152, 211, 0.3);
-            border-radius: 16px;
-            padding: 22px 26px;
-        }
-        .nxq-upload-actions .stButton button { width: 100%; border-radius: 12px; padding: 0.75rem 1rem; font-weight: 600; }
-        .nxq-upload-actions .stButton:nth-child(1) button { background: linear-gradient(135deg, rgba(67,97,238,0.92), rgba(56,189,248,0.92)) !important; border: none !important; color: #f9fbff !important; }
-        .nxq-upload-actions .stButton:nth-child(2) button { background: rgba(30,41,59,0.9) !important; border: 1px solid rgba(148,163,184,0.35) !important; color: rgba(203,213,225,0.9) !important; }
-        .nxq-progress-steps { display: flex; align-items: center; gap: 10px; margin: 32px 0 18px; }
-        .nxq-progress-step { display: flex; flex-direction: column; align-items: center; gap: 6px; flex: 1; }
-        .nxq-progress-node { width: 48px; height: 48px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 600; border: 2px solid rgba(125,160,255,0.35); background: rgba(14,26,54,0.9); }
-        .nxq-progress-node.running { border-color: rgba(59,130,246,0.7); color: #9fd0ff; }
-        .nxq-progress-node.completed { border-color: rgba(34,197,94,0.7); color: #a7f3d0; }
-        .nxq-progress-node.error { border-color: rgba(248,113,113,0.8); color: #fecaca; }
-        .nxq-progress-label { font-size: 0.82rem; text-align: center; color: rgba(200,210,235,0.85); }
-        .nxq-progress-connector { height: 2px; flex: 1; background: linear-gradient(90deg, rgba(59,130,246,0.45), rgba(59,130,246,0.15)); }
-        .nxq-view-switcher .stRadio > label { display: none; }
-        .nxq-view-switcher .st-bc { display: flex; gap: 12px; flex-wrap: wrap; }
-        .nxq-view-switcher [role="radiogroup"] > label { border-radius: 999px; padding: 0.45rem 1.35rem; border: 1px solid rgba(148,163,184,0.35); background: rgba(20,30,48,0.9); font-weight: 500; }
-        .nxq-chat-panel { background: rgba(12,20,35,0.92); border: 1px solid rgba(110,145,210,0.28); border-radius: 18px; padding: 1.3rem; box-shadow: 0 18px 38px rgba(3,10,28,0.55); position: sticky; top: 6.5rem; }
-        .nxq-chat-messages { max-height: 420px; overflow-y: auto; margin-bottom: 1rem; padding-right: 8px; }
-        .nxq-chat-bubble { margin-bottom: 0.8rem; padding: 0.75rem 1rem; border-radius: 14px; line-height: 1.45; font-size: 0.95rem; }
-        .nxq-chat-bubble.ai { background: rgba(59,130,246,0.12); border: 1px solid rgba(59,130,246,0.25); }
-        .nxq-chat-bubble.user { background: rgba(56,178,172,0.18); border: 1px solid rgba(56,178,172,0.32); }
-        .nxq-toast { position: fixed; right: 28px; bottom: 28px; background: rgba(30,41,59,0.95); border: 1px solid rgba(248,113,113,0.4); border-radius: 14px; padding: 0.9rem 1.1rem; display: flex; align-items: center; gap: 10px; box-shadow: 0 15px 30px rgba(3,10,28,0.45); z-index: 99; }
-        .nxq-logs-overlay { position: fixed; top: 80px; right: 48px; width: min(420px, 92vw); max-height: 72vh; overflow-y: auto; background: rgba(11,18,32,0.96); border: 1px solid rgba(120,160,210,0.35); border-radius: 16px; padding: 1.4rem; box-shadow: 0 24px 45px rgba(2,8,22,0.6); z-index: 120; }
-        .nxq-logs-entry { border-left: 3px solid rgba(59,130,246,0.45); padding: 0.55rem 0.8rem; margin-bottom: 0.6rem; background: rgba(16,24,40,0.85); }
-        .nxq-logs-entry small { color: rgba(198,212,238,0.65); display: block; margin-bottom: 3px; }
-    </style>
-    """)
+    css_template = Template(
+        """
+        <style>
+            header, [data-testid="stSidebar"], [data-testid="collapsedControl"], [data-testid="stToolbar"] {
+                display: none !important;
+            }
+            body {
+                background: $background;
+                color: $text;
+                font-family: 'SF Pro Display', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            }
+            [data-testid="stAppViewContainer"] > .main {
+                background: $background;
+            }
+            .block-container {
+                padding: 0 2rem 3.5rem;
+                max-width: 1100px;
+                margin: 0 auto;
+            }
+            .nxq-header {
+                display: flex;
+                align-items: flex-end;
+                justify-content: space-between;
+                padding: 32px 0 24px;
+                margin-bottom: 32px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            }
+            .nxq-brand { display: flex; align-items: center; gap: 20px; }
+            .nxq-brand-logo {
+                width: 52px;
+                height: 52px;
+                border-radius: 20px;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                background: linear-gradient(155deg, rgba(10, 132, 255, 0.65), rgba(64, 255, 217, 0.4));
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 10px;
+                box-shadow: 0 18px 38px rgba(7, 16, 30, 0.55);
+            }
+            .nxq-brand-logo svg { width: 100%; height: 100%; }
+            .nxq-brand-title {
+                margin: 0;
+                font-size: 1.75rem;
+                font-weight: 700;
+                letter-spacing: -0.02em;
+                background: linear-gradient(98deg, rgba(255,255,255,0.96) 0%, rgba(175,229,255,0.9) 80%);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+            }
+            .nxq-brand-subtitle {
+                margin: 4px 0 0;
+                font-size: 0.92rem;
+                color: rgba(219, 229, 244, 0.7);
+            }
+            .nxq-header-actions { display: flex; align-items: center; gap: 10px; }
+            .nxq-header-actions .stButton button {
+                border-radius: 10px;
+                border: 1px solid rgba(255,255,255,0.08);
+                background: rgba(255,255,255,0.04);
+                color: rgba(236, 243, 255, 0.9);
+                font-weight: 500;
+                padding: 0.42rem 0.95rem;
+            }
+            .nxq-export-group { display: flex; gap: 6px; }
+            .nxq-export-group .stButton button {
+                width: 46px;
+                height: 46px;
+                border-radius: 12px;
+                border: 1px solid rgba(255,255,255,0.08);
+                background: rgba(10, 132, 255, 0.12);
+                color: rgba(223, 237, 255, 0.95);
+                font-weight: 600;
+                letter-spacing: 0.01em;
+            }
+            .nxq-upload-wrapper { display: flex; justify-content: center; margin-top: 18px; }
+            .nxq-upload-card {
+                max-width: 620px;
+                width: 100%;
+                background: rgba(20, 22, 30, 0.76);
+                border: 1px solid rgba(255,255,255,0.05);
+                border-radius: 24px;
+                padding: 32px 40px;
+                box-shadow: 0 32px 60px rgba(4, 8, 20, 0.55);
+                backdrop-filter: blur(18px);
+            }
+            .nxq-upload-title {
+                font-size: 0.95rem;
+                text-transform: uppercase;
+                font-weight: 600;
+                letter-spacing: 0.08em;
+                margin-bottom: 18px;
+                color: rgba(216, 225, 236, 0.78);
+            }
+            .nxq-dropzone {
+                border: 1px dashed rgba(148, 180, 215, 0.32);
+                border-radius: 20px;
+                background: rgba(21, 24, 32, 0.85);
+                padding: 52px 24px 44px;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                text-align: center;
+                gap: 10px;
+            }
+            .nxq-dropzone svg { display: none; }
+            .nxq-dropzone::before { content: "\u2191"; font-size: 2.6rem; color: rgba(175, 229, 255, 0.9); }
+            .nxq-dropzone::after { content: "Arraste arquivos ou clique para enviar"; color: rgba(223, 233, 244, 0.92); font-size: 1.02rem; font-weight: 600; }
+            .nxq-hint { margin-top: 14px; text-align: center; font-size: 0.85rem; color: rgba(190, 205, 228, 0.65); }
+            .nxq-demo-link .stButton button { background: none; border: none; color: rgba(128, 198, 255, 0.88); padding: 0; font-weight: 500; }
+            .nxq-upload-extras {
+                max-width: 620px;
+                margin: 24px auto 0;
+                background: rgba(18, 20, 27, 0.78);
+                border: 1px solid rgba(255,255,255,0.04);
+                border-radius: 20px;
+                padding: 20px 24px;
+                box-shadow: 0 22px 48px rgba(4, 8, 20, 0.45);
+            }
+            .nxq-upload-actions .stButton button { width: 100%; border-radius: 12px; padding: 0.75rem 1rem; font-weight: 600; }
+            .nxq-upload-actions .stButton:nth-child(1) button { background: linear-gradient(135deg, rgba(10,132,255,0.9), rgba(64,255,217,0.75)) !important; border: none !important; color: #041021 !important; }
+            .nxq-upload-actions .stButton:nth-child(2) button { background: rgba(29,32,40,0.85) !important; border: 1px solid rgba(255,255,255,0.08) !important; color: rgba(212,220,236,0.85) !important; }
+            .nxq-progress-steps { display: flex; align-items: center; gap: 12px; margin: 28px 0 14px; justify-content: space-between; }
+            .nxq-progress-step { display: flex; flex-direction: column; align-items: center; gap: 8px; flex: 1; }
+            .nxq-progress-node { width: 44px; height: 44px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-weight: 500; border: 1px solid rgba(255,255,255,0.08); background: rgba(26, 28, 36, 0.92); color: rgba(238, 244, 255, 0.8); }
+            .nxq-progress-node.running { border-color: rgba(10,132,255,0.6); color: rgba(173,215,255,0.95); }
+            .nxq-progress-node.completed { border-color: rgba(64,255,217,0.7); color: rgba(64,255,217,0.9); }
+            .nxq-progress-node.error { border-color: rgba(255,95,109,0.7); color: rgba(255,95,109,0.9); }
+            .nxq-progress-label { font-size: 0.78rem; text-align: center; color: rgba(203,210,224,0.75); }
+            .nxq-progress-connector { height: 1px; flex: 1; background: linear-gradient(90deg, rgba(255,255,255,0.08), rgba(255,255,255,0)); }
+            .nxq-view-switcher .stRadio > label { display: none; }
+            .nxq-view-switcher .st-bc { display: flex; gap: 10px; flex-wrap: wrap; }
+            .nxq-view-switcher [role="radiogroup"] > label { border-radius: 999px; padding: 0.45rem 1.4rem; border: 1px solid rgba(255,255,255,0.08); background: rgba(28, 30, 38, 0.9); font-weight: 500; color: rgba(220,226,236,0.9); }
+            .nxq-view-switcher [role="radiogroup"] > label:hover { border-color: rgba(10,132,255,0.5); }
+            .nxq-chat-panel { background: rgba(19, 21, 28, 0.82); border: 1px solid rgba(255,255,255,0.05); border-radius: 22px; padding: 1.4rem; box-shadow: 0 26px 50px rgba(4, 8, 20, 0.55); position: sticky; top: 6rem; }
+            .nxq-chat-messages { max-height: 420px; overflow-y: auto; margin-bottom: 1rem; padding-right: 6px; }
+            .nxq-chat-bubble { margin-bottom: 0.9rem; padding: 0.85rem 1.05rem; border-radius: 16px; line-height: 1.5; font-size: 0.94rem; }
+            .nxq-chat-bubble.ai { background: rgba(46, 50, 64, 0.88); border: 1px solid rgba(255,255,255,0.04); color: rgba(224, 232, 246, 0.9); }
+            .nxq-chat-bubble.user { background: rgba(10,132,255,0.15); border: 1px solid rgba(10,132,255,0.2); color: rgba(202, 231, 255, 0.92); }
+            .nxq-toast { position: fixed; right: 32px; bottom: 32px; background: rgba(24,27,34,0.96); border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; padding: 0.85rem 1.1rem; display: flex; align-items: center; gap: 10px; box-shadow: 0 22px 38px rgba(3,10,28,0.45); z-index: 99; }
+            .nxq-logs-overlay { position: fixed; top: 84px; right: 44px; width: min(420px, 92vw); max-height: 72vh; overflow-y: auto; background: rgba(17,19,26,0.98); border: 1px solid rgba(255,255,255,0.07); border-radius: 20px; padding: 1.6rem; box-shadow: 0 28px 48px rgba(5,10,24,0.6); z-index: 120; }
+            .nxq-logs-entry { border-left: 3px solid rgba(10,132,255,0.45); padding: 0.6rem 0.8rem; margin-bottom: 0.6rem; background: rgba(24, 27, 36, 0.85); }
+            .nxq-logs-entry small { color: rgba(198,212,238,0.65); display: block; margin-bottom: 3px; }
+        </style>
+        """
+    )
 
     css = css_template.substitute(background=BACKGROUND_COLOR, text=TEXT_COLOR)
     st.markdown(css, unsafe_allow_html=True)
@@ -349,7 +375,6 @@ def _run_pipeline() -> None:
         st.session_state["processing_status"] = f"Processando {index}/{len(queue)}: {name}"
         for step_id, _ in AGENT_STEPS:
             st.session_state["agent_status"][step_id] = "running"
-        st.experimental_rerun()
         try:
             raw_result = process_uploaded_file(payload)
             results.append(raw_result)
@@ -362,7 +387,10 @@ def _run_pipeline() -> None:
                 st.session_state["agent_status"][step_id] = "error"
     st.session_state["analysis_results"] = results
     st.session_state["logs_payload"] = logs
-    aggregated = _aggregate_local(results)
+    backend_aggregated = {}
+    if results and isinstance(results[-1], dict):
+        backend_aggregated = results[-1].get("aggregated") or {}
+    aggregated = backend_aggregated or _aggregate_local(results)
     st.session_state["aggregated_overview"] = {
         "reports": [r for result in results for r in result.get("reports", [])],
         "docs": aggregated.get("docs", []),

@@ -12,17 +12,14 @@ class ProgressManager:
     def __init__(self) -> None:
         self._queues: Dict[str, List[asyncio.Queue]] = {}
         self._results: Dict[str, Any] = {}
-        self._history: Dict[str, List[Dict[str, Any]]] = {}
-        self._closed: set[str] = set()
         self._lock = asyncio.Lock()
 
     async def create_job(self, job_id: str) -> None:
         """Initialise the subscription bucket for a new job identifier."""
 
         async with self._lock:
-            self._queues[job_id] = []
-            self._history[job_id] = []
-            self._closed.discard(job_id)
+            if job_id not in self._queues:
+                self._queues[job_id] = []
             # Drop any stale cached result for a recycled identifier.
             self._results.pop(job_id, None)
 
@@ -30,33 +27,17 @@ class ProgressManager:
         """Register a new subscriber queue for a job."""
 
         async with self._lock:
-            if job_id not in self._history:
+            if job_id not in self._queues:
                 return None
-
             queue: asyncio.Queue = asyncio.Queue()
-            watchers = self._queues.setdefault(job_id, [])
-            watchers.append(queue)
-            history = list(self._history.get(job_id, []))
-            closed = job_id in self._closed
-
-        for event in history:
-            await queue.put(event)
-
-        if closed:
-            await queue.put(None)
-
-        return queue
+            self._queues[job_id].append(queue)
+            return queue
 
     async def publish(self, job_id: str, event: Dict[str, Any]) -> None:
-        async with self._lock:
-            history = self._history.get(job_id)
-            if history is None:
-                return
-            history.append(event)
-            queues = list(self._queues.get(job_id, []))
-
-        if queues:
-            await asyncio.gather(*(queue.put(event) for queue in queues))
+        queues = self._queues.get(job_id)
+        if not queues:
+            return
+        await asyncio.gather(*(queue.put(event) for queue in list(queues)))
 
     def set_result(self, job_id: str, result: Any) -> None:
         self._results[job_id] = result
@@ -67,19 +48,12 @@ class ProgressManager:
     async def finalize(self, job_id: str) -> None:
         """Push the completion sentinel to subscribers."""
 
-        async with self._lock:
-            closing = {"type": "job", "status": "closed", "job_id": job_id}
-            history = self._history.get(job_id)
-            if history is not None:
-                history.append(closing)
-            queues = list(self._queues.get(job_id, []))
-            self._closed.add(job_id)
-
+        queues = self._queues.get(job_id)
         if not queues:
             return
-
-        await asyncio.gather(*(queue.put(closing) for queue in queues))
-        await asyncio.gather(*(queue.put(None) for queue in queues))
+        closing = {"type": "job", "status": "closed", "job_id": job_id}
+        await asyncio.gather(*(queue.put(closing) for queue in list(queues)))
+        await asyncio.gather(*(queue.put(None) for queue in list(queues)))
 
     async def discard(self, job_id: str, queue: Optional[asyncio.Queue] = None) -> None:
         """Remove queue(s) for a finished job while keeping cached results."""
@@ -87,9 +61,6 @@ class ProgressManager:
         async with self._lock:
             if queue is None:
                 self._queues.pop(job_id, None)
-                self._history.pop(job_id, None)
-                self._results.pop(job_id, None)
-                self._closed.discard(job_id)
                 return
             watchers = self._queues.get(job_id)
             if not watchers:
@@ -98,16 +69,13 @@ class ProgressManager:
                 watchers.remove(queue)
             except ValueError:  # pragma: no cover - defensive
                 return
-            if not watchers and job_id not in self._closed:
-                self._queues[job_id] = []
+            if not watchers:
+                self._queues.pop(job_id, None)
 
     def forget(self, job_id: str) -> None:
         """Explicitly remove cached results when no longer needed."""
 
         self._results.pop(job_id, None)
-        self._history.pop(job_id, None)
-        self._queues.pop(job_id, None)
-        self._closed.discard(job_id)
 
 
 progress_manager = ProgressManager()
