@@ -9,7 +9,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import aiofiles
 
@@ -58,7 +58,24 @@ async def _export_logs(logs: List[Dict[str, Any]]) -> None:
         await fp.write(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
-async def _process_single_document(doc: Dict[str, Any], semaphore: asyncio.Semaphore) -> Dict[str, Any]:
+ProgressCallback = Optional[Callable[[Dict[str, Any]], Awaitable[None]]]
+
+
+async def _maybe_emit(
+    callback: ProgressCallback,
+    payload: Dict[str, Any],
+) -> None:
+    if callback is None:
+        return
+    await callback(payload)
+
+
+async def _process_single_document(
+    doc: Dict[str, Any],
+    semaphore: asyncio.Semaphore,
+    progress_callback: ProgressCallback = None,
+    job_id: Optional[str] = None,
+) -> Dict[str, Any]:
     async with semaphore:
         document_id = doc.get("id") or str(uuid.uuid4())
         log_event("manager", "INFO", "Iniciando processamento", {"document_id": document_id})
@@ -68,7 +85,18 @@ async def _process_single_document(doc: Dict[str, Any], semaphore: asyncio.Semap
             "events": [],
         }
 
-        def append_stage(stage: StageLog) -> None:
+        await _maybe_emit(
+            progress_callback,
+            {
+                "type": "document",
+                "job_id": job_id,
+                "document_id": document_id,
+                "status": "started",
+                "name": doc.get("name"),
+            },
+        )
+
+        async def append_stage(stage: StageLog) -> None:
             entry = stage.to_dict()
             doc_log["events"].append(entry)
             log_event(
@@ -77,12 +105,35 @@ async def _process_single_document(doc: Dict[str, Any], semaphore: asyncio.Semap
                 f"{stage.name}::{stage.status}",
                 {"document_id": document_id, **(stage.details or {})},
             )
+            await _maybe_emit(
+                progress_callback,
+                {
+                    "type": "stage",
+                    "job_id": job_id,
+                    "document_id": document_id,
+                    "stage": stage.name,
+                    "status": stage.status,
+                    "details": stage.details,
+                    "log": entry,
+                },
+            )
 
         semaphore_inner = asyncio.Semaphore(3)
 
         async def _run_stage(name: str, coro, details: Optional[Dict[str, Any]] = None):
             async with semaphore_inner:
                 stage = StageLog(name=name, status="running", started_at=time.time(), details=details or {})
+                await _maybe_emit(
+                    progress_callback,
+                    {
+                        "type": "stage",
+                        "job_id": job_id,
+                        "document_id": document_id,
+                        "stage": name,
+                        "status": "running",
+                        "details": details or {},
+                    },
+                )
                 try:
                     result = await coro
                     stage.status = "completed"
@@ -93,14 +144,14 @@ async def _process_single_document(doc: Dict[str, Any], semaphore: asyncio.Semap
                     raise
                 finally:
                     stage.finished_at = time.time()
-                    append_stage(stage)
+                    await append_stage(stage)
 
         # Stage 1 - optional OCR
         if doc.get("kind") in {"PDF", "IMAGE"}:
             ocr_result = await _run_stage("ocr", run_ocr(doc))
             doc.setdefault("data", {})["text"] = (ocr_result or {}).get("text")
         else:
-            append_stage(
+            await append_stage(
                 StageLog(
                     name="ocr",
                     status="skipped",
@@ -157,17 +208,61 @@ async def _process_single_document(doc: Dict[str, Any], semaphore: asyncio.Semap
             "source": source_snapshot,
         }
         log_event("manager", "INFO", "Processamento concluído", {"document_id": document_id})
+        await _maybe_emit(
+            progress_callback,
+            {
+                "type": "document",
+                "job_id": job_id,
+                "document_id": document_id,
+                "status": "completed",
+                "report": report,
+            },
+        )
         return {"report": report, "log": doc_log}
 
 
 ASYNC_BATCH_SIZE = max(1, settings.MAX_CONCURRENT_TASKS)
 
 
-async def process_documents_pipeline(docs: List[Dict[str, Any]]) -> Dict[str, Any]:
+async def process_documents_pipeline(
+    docs: List[Dict[str, Any]],
+    *,
+    progress_callback: ProgressCallback = None,
+    job_id: Optional[str] = None,
+) -> Dict[str, Any]:
     semaphore = asyncio.Semaphore(ASYNC_BATCH_SIZE)
-    results = await asyncio.gather(*[_process_single_document(doc, semaphore) for doc in docs])
+    if progress_callback:
+        await progress_callback(
+            {
+                "type": "job",
+                "job_id": job_id,
+                "status": "processing",
+                "total_documents": len(docs),
+            }
+        )
+    results = await asyncio.gather(
+        *[
+            _process_single_document(
+                doc,
+                semaphore,
+                progress_callback=progress_callback,
+                job_id=job_id,
+            )
+            for doc in docs
+        ]
+    )
     reports = [r["report"] for r in results]
     logs = [r["log"] for r in results]
     aggregated = accountant_agent(reports)
+    if progress_callback:
+        await progress_callback(
+            {
+                "type": "job",
+                "job_id": job_id,
+                "status": "aggregated",
+                "reports": len(reports),
+                "aggregated": aggregated,
+            }
+        )
     await _export_logs(logs)
     return {"reports": reports, "logs": logs, "aggregated": aggregated}
