@@ -1,12 +1,15 @@
+import asyncio
 import io
+import json
 import mimetypes
+import uuid
 from pathlib import Path
 
 from fastapi import Body, FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from core.settings import settings
 from core.logger import log_event
 from services.parsers import parse_any_files_from_zip, parse_file
@@ -17,6 +20,7 @@ from services.export_docx import build_docx
 from services.export_pdf import build_pdf
 from services.export_html import build_html
 from services.export_sped import build_sped_efd
+from utils.progress_stream import progress_manager
 
 app = FastAPI(title="Nexus Python Backend", version="1.1")
 app.add_middleware(
@@ -33,6 +37,39 @@ class ReportRequest(BaseModel):
 @app.get("/health")
 async def health():
     return {"status":"ok","ts":"2025-10-18T11:13:15.030344","max_upload_mb": settings.MAX_UPLOAD_MB}
+
+async def _collect_docs_from_files(files: List[UploadFile]) -> List[Dict[str, Any]]:
+    docs: List[Dict[str, Any]] = []
+    for file in files:
+        name = file.filename or "arquivo"
+        content = await file.read()
+        size_mb = len(content) / 1024 / 1024
+        if size_mb > settings.MAX_UPLOAD_MB:
+            raise HTTPException(413, f"{name} excede limite de {settings.MAX_UPLOAD_MB} MB")
+
+        suffix = Path(name).suffix.lower()
+        mime = file.content_type or mimetypes.guess_type(name)[0] or ""
+
+        if suffix == ".zip" or mime in {"application/zip", "application/x-zip-compressed"}:
+            log_event("upload", "INFO", f"Processando ZIP: {name} ({size_mb:.2f} MB)")
+            docs.extend(parse_any_files_from_zip(content))
+            continue
+
+        if suffix and suffix not in settings.ALLOWED_EXTENSIONS:
+            raise HTTPException(400, f"Extensão não suportada para {name}.")
+        if mime and not any(mime.startswith(prefix) for prefix in settings.ALLOWED_MIME_PREFIXES):
+            raise HTTPException(400, f"MIME type não autorizado para {name}.")
+
+        doc = parse_file(name, content, mime)
+        if doc.get("kind") == "UNKNOWN":
+            continue
+        docs.append(doc)
+
+    if not docs:
+        raise HTTPException(422, "Nenhum arquivo válido encontrado para processamento.")
+
+    return docs
+
 
 @app.post("/upload/zip")
 async def upload_zip(file: UploadFile = File(...)):
@@ -73,33 +110,7 @@ async def upload_multiple(files: List[UploadFile] = File(...)):
     if not files:
         raise HTTPException(400, "Nenhum arquivo enviado.")
 
-    docs = []
-    for file in files:
-        name = file.filename or "arquivo"
-        content = await file.read()
-        size_mb = len(content) / 1024 / 1024
-        if size_mb > settings.MAX_UPLOAD_MB:
-            raise HTTPException(413, f"{name} excede limite de {settings.MAX_UPLOAD_MB} MB")
-
-        suffix = Path(name).suffix.lower()
-        mime = file.content_type or mimetypes.guess_type(name)[0] or ""
-
-        if suffix == ".zip" or mime in {"application/zip", "application/x-zip-compressed"}:
-            docs.extend(parse_any_files_from_zip(content))
-            continue
-
-        if suffix and suffix not in settings.ALLOWED_EXTENSIONS:
-            raise HTTPException(400, f"Extensão não suportada para {name}.")
-        if mime and not any(mime.startswith(prefix) for prefix in settings.ALLOWED_MIME_PREFIXES):
-            raise HTTPException(400, f"MIME type não autorizado para {name}.")
-
-        doc = parse_file(name, content, mime)
-        if doc.get("kind") == "UNKNOWN":
-            continue
-        docs.append(doc)
-
-    if not docs:
-        raise HTTPException(422, "Nenhum arquivo válido encontrado para processamento.")
+    docs = await _collect_docs_from_files(files)
 
     result = await process_documents_pipeline(docs)
     aggregated = merge_results(result.get("reports", []))
@@ -153,3 +164,89 @@ async def export_sped(payload: ReportRequest):
     buf, filename = build_sped_efd(payload.dataset)
     return StreamingResponse(io.BytesIO(buf), media_type="text/plain",
                              headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+
+async def _run_pipeline_job(job_id: str, docs: List[Dict[str, Any]]) -> None:
+    async def _callback(event: Dict[str, Any]) -> None:
+        await progress_manager.publish(job_id, event)
+
+    await progress_manager.publish(
+        job_id,
+        {
+            "type": "job",
+            "job_id": job_id,
+            "status": "started",
+            "total_documents": len(docs),
+        },
+    )
+
+    try:
+        result = await process_documents_pipeline(
+            docs,
+            progress_callback=_callback,
+            job_id=job_id,
+        )
+        payload = {"status": "completed", **result}
+        await progress_manager.publish(
+            job_id,
+            {
+                "type": "job",
+                "job_id": job_id,
+                "status": "completed",
+                "result": payload,
+            },
+        )
+        progress_manager.set_result(job_id, payload)
+    except Exception as exc:  # pragma: no cover - defensive
+        log_event("pipeline", "ERROR", "Job falhou", {"job_id": job_id, "error": str(exc)})
+        await progress_manager.publish(
+            job_id,
+            {
+                "type": "job",
+                "job_id": job_id,
+                "status": "failed",
+                "error": str(exc),
+            },
+        )
+        progress_manager.set_result(job_id, {"status": "failed", "error": str(exc)})
+    finally:
+        await progress_manager.finalize(job_id)
+
+
+@app.post("/pipeline/jobs")
+async def create_pipeline_job(files: List[UploadFile] = File(...)):
+    if not files:
+        raise HTTPException(400, "Nenhum arquivo enviado.")
+
+    docs = await _collect_docs_from_files(files)
+    job_id = str(uuid.uuid4())
+    await progress_manager.create_job(job_id)
+    asyncio.create_task(_run_pipeline_job(job_id, docs))
+    return JSONResponse({"job_id": job_id})
+
+
+@app.get("/pipeline/jobs/{job_id}")
+async def get_pipeline_job(job_id: str):
+    result = progress_manager.get_result(job_id)
+    if result is None:
+        raise HTTPException(404, "Resultado ainda não disponível ou job inexistente.")
+    return JSONResponse(result)
+
+
+@app.get("/pipeline/jobs/{job_id}/stream")
+async def stream_pipeline_job(job_id: str):
+    queue = await progress_manager.subscribe(job_id)
+    if queue is None:
+        raise HTTPException(404, "Job inexistente.")
+
+    async def event_generator():
+        try:
+            while True:
+                event = await queue.get()
+                if event is None:
+                    break
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        finally:
+            await progress_manager.discard(job_id, queue)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
