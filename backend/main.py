@@ -235,7 +235,7 @@ async def get_pipeline_job(job_id: str):
 
 @app.get("/pipeline/jobs/{job_id}/stream")
 async def stream_pipeline_job(job_id: str):
-    queue = progress_manager.get_queue(job_id)
+    queue = await progress_manager.subscribe(job_id)
     if queue is None:
         raise HTTPException(404, "Job inexistente.")
 
@@ -247,6 +247,6 @@ async def stream_pipeline_job(job_id: str):
                     break
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         finally:
-            progress_manager.discard(job_id)
+            await progress_manager.discard(job_id, queue)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
