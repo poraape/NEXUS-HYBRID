@@ -3,26 +3,45 @@ import io
 import json
 import mimetypes
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Dict, List
 
-from fastapi import Body, FastAPI, UploadFile, File, HTTPException
+from fastapi import Body, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel
-from typing import Any, Dict, List
-from core.settings import settings
+from pydantic import BaseModel, Field
+
+from agents.accountant_agent import compute
+from agents.auditor_agent import audit
+from agents.classifier_agent import classify
+from agents.intelligence_agent import generate_insights
+from agents.manager import process_documents_pipeline
+from agents.ocr_agent import run_ocr
 from core.logger import log_event
+from core.settings import settings
+from backend.models import (
+    AccountingOutput,
+    AuditIssue,
+    AuditReport,
+    ClassificationResult,
+    Document,
+    DocumentIn,
+    IntelligenceInsight,
+    OrchestratorRequest,
+    OrchestratorResult,
+)
+from services.export_docx import build_docx
+from services.export_html import build_html
+from services.export_pdf import build_pdf
+from services.export_sped import build_sped_efd
 from services.parsers import parse_any_files_from_zip, parse_file
+from services.validator import enrich_with_xai
 from utils.aggregator import merge_results
 from utils.fiscal_compare import compare_docs
-from agents.manager import process_documents_pipeline
-from services.export_docx import build_docx
-from services.export_pdf import build_pdf
-from services.export_html import build_html
-from services.export_sped import build_sped_efd
 from utils.progress_stream import progress_manager
 
-app = FastAPI(title="Nexus Python Backend", version="1.1")
+app = FastAPI(title="Nexus Python Backend", version="1.2")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -34,9 +53,27 @@ app.add_middleware(
 class ReportRequest(BaseModel):
     dataset: dict
 
+
+class AutomationRequest(BaseModel):
+    document: Document
+    audit: AuditReport | None = None
+    classification: ClassificationResult | None = None
+
+
+class ConsultRequest(BaseModel):
+    documents: List[Document] = Field(default_factory=list)
+    audits: List[AuditReport] = Field(default_factory=list)
+    classifications: List[ClassificationResult] = Field(default_factory=list)
+    accounting: List[AccountingOutput] = Field(default_factory=list)
+
 @app.get("/health")
-async def health():
-    return {"status":"ok","ts":"2025-10-18T11:13:15.030344","max_upload_mb": settings.MAX_UPLOAD_MB}
+async def health() -> Dict[str, Any]:
+    return {
+        "status": "ok",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "max_upload_mb": settings.MAX_UPLOAD_MB,
+        "version": app.version,
+    }
 
 async def _collect_docs_from_files(files: List[UploadFile]) -> List[Dict[str, Any]]:
     docs: List[Dict[str, Any]] = []
@@ -69,6 +106,159 @@ async def _collect_docs_from_files(files: List[UploadFile]) -> List[Dict[str, An
         raise HTTPException(422, "Nenhum arquivo válido encontrado para processamento.")
 
     return docs
+
+
+def _decode_document_input(payload: DocumentIn) -> Dict[str, Any]:
+    try:
+        content = payload.decode()
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    size_mb = len(content) / 1024 / 1024
+    if size_mb > settings.MAX_UPLOAD_MB:
+        raise HTTPException(413, f"Arquivo excede limite de {settings.MAX_UPLOAD_MB} MB")
+
+    mime = payload.content_type or mimetypes.guess_type(payload.filename)[0] or ""
+    doc = parse_file(payload.filename, content, mime)
+    if doc.get("kind") == "UNKNOWN":
+        raise HTTPException(422, "Arquivo não pôde ser processado.")
+    return _ensure_document_defaults(doc)
+
+
+def _ensure_document_defaults(doc: Dict[str, Any]) -> Dict[str, Any]:
+    data = doc.setdefault("data", {})
+    if isinstance(data, dict):
+        data.setdefault("metadata", {})
+    return doc
+
+
+def _prepare_agent_document(document: Document) -> Dict[str, Any]:
+    payload = document.dict_for_agent()
+    return _ensure_document_defaults(payload)
+
+
+async def _run_extractor(doc: Dict[str, Any]) -> Dict[str, Any]:
+    if doc.get("kind") in {"PDF", "IMAGE"} and doc.get("raw"):
+        ocr_result = await run_ocr(doc)
+        if ocr_result:
+            data = doc.setdefault("data", {})
+            if isinstance(data, dict):
+                data["text"] = (ocr_result or {}).get("text")
+    return doc
+
+
+@app.post("/upload", response_model=Document)
+async def upload_document(payload: DocumentIn) -> Document:
+    doc = await _run_extractor(_decode_document_input(payload))
+    return Document.model_validate(doc)
+
+
+@app.post("/validate", response_model=AuditReport)
+async def validate_document(document: Document) -> AuditReport:
+    agent_doc = _prepare_agent_document(document)
+    compliance = await audit(agent_doc)
+    context = {}
+    data = agent_doc.get("data") or {}
+    if isinstance(data, dict):
+        metadata = data.get("metadata") or {}
+        context = {
+            "regime": metadata.get("regime"),
+            "segmento": metadata.get("segmento"),
+        }
+    enriched = enrich_with_xai(compliance, context=context)
+    issues = [AuditIssue.model_validate(issue) for issue in enriched.get("inconsistencies", [])]
+    corrections = [
+        f"Revisar {issue.field or 'campo'} ({issue.code})"
+        for issue in issues
+        if issue.severity.upper() in {"WARN", "ERROR"}
+    ]
+    return AuditReport(
+        score=float(enriched.get("score") or 0),
+        issues=issues,
+        recommended_corrections=sorted(set(corrections)),
+    )
+
+
+@app.post("/classify", response_model=ClassificationResult)
+async def classify_document(document: Document) -> ClassificationResult:
+    agent_doc = _prepare_agent_document(document)
+    result = await classify(agent_doc)
+    return ClassificationResult.model_validate(result)
+
+
+@app.post("/automate", response_model=AccountingOutput)
+async def automate_document(payload: AutomationRequest) -> AccountingOutput:
+    agent_doc = _prepare_agent_document(payload.document)
+    result = await compute(agent_doc)
+    return AccountingOutput.model_validate(result)
+
+
+@app.post("/consult", response_model=IntelligenceInsight)
+async def consult_insights(payload: ConsultRequest) -> IntelligenceInsight:
+    reports: List[Dict[str, Any]] = []
+    for index, document in enumerate(payload.documents):
+        base = _prepare_agent_document(document)
+        report: Dict[str, Any] = {
+            "documentId": base.get("id") or base.get("name"),
+            "title": base.get("name"),
+            "source": base.get("data"),
+        }
+        if index < len(payload.audits):
+            audit_report = payload.audits[index]
+            report["compliance"] = {
+                "score": audit_report.score,
+                "inconsistencies": [
+                    issue.model_dump(mode="python", exclude_none=True) for issue in audit_report.issues
+                ],
+            }
+        if index < len(payload.classifications):
+            report["classification"] = payload.classifications[index].model_dump(
+                mode="python", exclude_none=True
+            )
+        if index < len(payload.accounting):
+            report["taxes"] = payload.accounting[index].model_dump(mode="python", exclude_none=True)
+        reports.append(report)
+
+    aggregated_totals: Dict[str, float] = {}
+    for accounting in payload.accounting:
+        for key, value in accounting.resumo.items():
+            try:
+                aggregated_totals[key] = aggregated_totals.get(key, 0.0) + float(value)
+            except (TypeError, ValueError):  # pragma: no cover - resilience
+                continue
+
+    aggregated_payload = {"totals": aggregated_totals}
+    audit_payloads = [audit.model_dump(mode="python", exclude_none=True) for audit in payload.audits]
+    return await generate_insights(reports, aggregated=aggregated_payload, audits=audit_payloads)
+
+
+@app.post("/orchestrate", response_model=OrchestratorResult)
+async def orchestrate(payload: OrchestratorRequest) -> OrchestratorResult:
+    docs: List[Dict[str, Any]] = []
+    for entry in payload.documents:
+        if entry.upload is not None:
+            docs.append(await _run_extractor(_decode_document_input(entry.upload)))
+            continue
+        assert entry.document is not None
+        doc = _prepare_agent_document(entry.document)
+        if doc.get("kind") in {"PDF", "IMAGE"} and not doc.get("raw"):
+            doc["kind"] = f"{doc['kind']}_STRUCTURED"
+        docs.append(doc)
+
+    if payload.async_mode:
+        job_id = str(uuid.uuid4())
+        await progress_manager.create_job(job_id)
+        asyncio.create_task(_run_pipeline_job(job_id, docs))
+        return OrchestratorResult(status="accepted", job_id=job_id, reports=[], aggregated={})
+
+    result = await process_documents_pipeline(docs)
+    insight = await generate_insights(result.get("reports", []), aggregated=result.get("aggregated"))
+    return OrchestratorResult(
+        status="completed",
+        reports=result.get("reports", []),
+        aggregated=result.get("aggregated", {}),
+        insight=insight,
+    )
 
 
 @app.post("/upload/zip")
